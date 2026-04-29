@@ -55,6 +55,20 @@ function formatShort(value: number): string {
 }
 
 export const statsController = {
+  /**
+   * Get global platform statistics.
+   * 
+   * This method performs a multi-step aggregation:
+   * 1. Fetches all registered organizations from the contract.
+   * 2. For each organization, it fetches the current budget and maintainer list.
+   * 3. For each maintainer, it fetches their current claimable balance.
+   * 4. Aggregates all values into a single response object.
+   * 
+   * Performance Notes:
+   * - Uses `Promise.all` for parallel fetching of org data.
+   * - Implements a 5-minute cache to prevent RPC rate limiting.
+   * - BigInt is used for all stroop calculations to prevent precision loss.
+   */
   async getGlobalStats(): Promise<GlobalStatsResponse> {
     const cacheKey = "stats:global";
     const cached = await safeGet(cacheKey);
@@ -138,9 +152,24 @@ export const statsController = {
   },
 
   /**
-   * Get top maintainers ranked by total earnings.
-   */
-  async getTopMaintainers(): Promise<TopMaintainer[]> {
+    * Get top maintainers ranked by total earnings.
+    * 
+    * This endpoint identifies the most impactful contributors across the entire
+    * Very Princess ecosystem. 
+    * 
+    * Ranking Logic:
+    * - Primary: Total earnings in Stroops (highest first).
+    * - Secondary: Number of organizations assisted.
+    * 
+    * Data Source:
+    * - Maintainer addresses are discovered via `readMaintainers` for every org.
+    * - Earnings stats are fetched via `readProfileStats` which parses on-chain events.
+    * 
+    * Optimization:
+    * - The list of unique maintainers is built first to avoid redundant stats calls.
+    * - The final sorted list is cached for 5 minutes.
+    */
+   async getTopMaintainers(): Promise<TopMaintainer[]> {
     const cacheKey = "stats:top-maintainers";
     const cached = await safeGet(cacheKey);
     if (cached) {

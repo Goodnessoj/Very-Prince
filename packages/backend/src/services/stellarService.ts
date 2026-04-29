@@ -20,6 +20,34 @@
  *     Soroban SDK helpers.
  *  3. Use `simulateTransaction` for read-only calls and `sendTransaction`
  *     for state-changing calls.
+ *
+ * ## Architecture & Data Flow
+ *
+ * 1. Request: Controller calls a service method (e.g., `readClaimableBalance`).
+ * 2. Preparation: Service builds an XDR envelope for the contract call.
+ * 3. Simulation: Service sends the XDR to Soroban RPC for simulation.
+ * 4. Response: RPC returns the simulation result (return value + footprint).
+ * 5. Parsing: Service decodes the XDR return value into native JS types.
+ *
+ * ## Error Handling Policy
+ *
+ * - Transient Errors: Handled via `_callWithRetry` (exponential backoff).
+ * - Contract Errors: Simulation failures are logged and thrown as standard Errors.
+ * - Network Errors: Horizon/RPC timeouts are caught and retried up to 3 times.
+ *
+ * ## Scaling Considerations
+ *
+ * - Concurrent Calls: The service handles multiple parallel requests via async/await.
+ * - Rate Limiting: Respects Stellar Testnet/Mainnet rate limits using the retry wrapper.
+ * - Caching: Higher-level controllers (like `statsController`) implement caching
+ *   to minimize redundant RPC calls.
+ *
+ * ## Security Best Practices
+ *
+ * - No Private Keys: This service should ideally only handle public keys and
+ *   signed XDRs. Secret keys should be managed by the caller or a secure KMS.
+ * - Input Validation: All addresses and identifiers should be validated before
+ *   being used in XDR construction.
  */
 
 import {
@@ -66,6 +94,19 @@ export class StellarService {
 
   /**
    * Helper to wrap calls with retry and backoff logic.
+   * 
+   * This method implements a standard exponential backoff strategy for handling
+   * rate limits (429 Too Many Requests) and transient network errors from both
+   * Horizon and Soroban RPC.
+   * 
+   * Implementation Details:
+   * - Uses `withRetry` utility from `../utils/retry.js`
+   * - Logs warnings on initial retries to assist in debugging
+   * - Logs a critical error if the maximum retry limit (default 3) is exceeded
+   * - Ensures that the application remains resilient under heavy network load
+   * 
+   * @param fn — The async function to be executed with retry logic.
+   * @returns The result of the function call if successful.
    */
   private async _callWithRetry<T>(fn: () => Promise<T>): Promise<T> {
     return withRetry(fn, {
@@ -84,8 +125,18 @@ export class StellarService {
   /**
    * Fetch basic account information from Horizon.
    *
+   * This is a standard Horizon operation that retrieves the current state of a
+   * Stellar account, including its sequence number, balances, and subentry count.
+   * It is used primarily to prepare transactions by fetching the current sequence
+   * number of the source account.
+   * 
+   * Technical Notes:
+   * - Communicates with the Horizon server via REST API.
+   * - Automatically retries on rate limits or transient errors.
+   * - The returned sequence number is used for the next transaction submission.
+   *
    * @param publicKey — The Stellar public key (G...) of the account.
-   * @throws If the account does not exist on the network.
+   * @throws If the account does not exist on the network (404 Not Found).
    */
   async getAccountInfo(publicKey: string): Promise<AccountInfo> {
     const account = await this._callWithRetry(() => this.horizon.loadAccount(publicKey));
