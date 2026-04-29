@@ -72,6 +72,31 @@ export default function LeaderboardPage({ params }: LeaderboardPageProps) {
 
   return (
     <div className="min-h-screen bg-stellar-blue px-6 py-12 md:py-24">
+      {/* 
+          Internal Documentation: Leaderboard Mechanics
+          
+          The leaderboard is a transparency tool designed to gamify open-source 
+          contributions. By highlighting top earners, we aim to:
+          
+          1. Increase visibility for active maintainers.
+          2. Encourage organizations to increase their payout budgets.
+          3. Provide social proof for contributors' impact on the ecosystem.
+          
+          Data Integrity:
+          - All earnings data is pulled directly from Stellar Soroban events.
+          - The "Organizations Assisted" count reflects unique org IDs found 
+            in the `allocate_payout` event topics.
+          - Rank calculation is performed server-side with a 5-minute cache 
+            to ensure performance without sacrificing data freshness.
+          
+          UX Considerations:
+          - Glassmorphism primitives are used to maintain visual consistency 
+            with the rest of the application.
+          - Address truncation prevents UI clutter while maintaining the 
+            cryptographic identity of the maintainers.
+          - The "Copy Address" utility provides a seamless way for others to 
+            send additional tips or contact the maintainers.
+      */}
       <div className="mx-auto max-w-5xl">
         {/* Header */}
         <div className="mb-12 text-center animate-fade-in">

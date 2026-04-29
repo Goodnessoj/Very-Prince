@@ -89,6 +89,21 @@ const PERSISTENT_BUMP_AMOUNT: u32 = 518_400;
 const PERSISTENT_LIFETIME_THRESHOLD: u32 = 120_960;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Technical Design Notes: Soroban Storage Model
+//
+// Soroban uses a state-archiving model to keep the ledger size manageable. 
+// Every entry (Persistent, Instance, Temporary) has a Time-To-Live (TTL).
+//
+// - Persistent: High-cost, long-lived data (Orgs, Maintainers).
+// - Instance: Data associated with the contract instance itself.
+// - Temporary: Low-cost data that expires quickly (not used here).
+//
+// Our implementation proactively bumps TTLs during read/write operations
+// to ensure that registered organizations and their budgets never "evict"
+// from the active ledger state.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Contract
 // ─────────────────────────────────────────────────────────────────────────────
 
