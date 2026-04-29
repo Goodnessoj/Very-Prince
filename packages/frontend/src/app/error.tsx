@@ -14,6 +14,7 @@
 import { useEffect } from 'react';
 import { Button } from '@/components/ui/Button';
 import { toast } from 'sonner';
+import { PrincessErrorMessage } from "@very-princess/types";
 
 // ── Error Types ──────────────────────────────────────────────────────────────
 
@@ -25,10 +26,18 @@ interface ErrorBoundaryProps {
 // ── Error Message Translation ───────────────────────────────────────────────────
 
 function translateBlockchainError(error: Error): string {
-  const errorMessage = error.message.toLowerCase();
+  const errorMessage = error.message;
+
+  // Check if the error message is one of our custom PrincessError messages
+  const customMessages = Object.values(PrincessErrorMessage);
+  if (customMessages.includes(errorMessage)) {
+    return errorMessage;
+  }
+
+  const lowerMessage = errorMessage.toLowerCase();
   
   // Common Stellar/Soroban error patterns
-  if (errorMessage.includes('outofgas') || errorMessage.includes('out of gas')) {
+  if (lowerMessage.includes('outofgas') || lowerMessage.includes('out of gas')) {
     return 'Transaction ran out of gas. Please try again with a higher gas limit.';
   }
   

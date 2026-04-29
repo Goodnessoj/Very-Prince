@@ -1,20 +1,6 @@
 /**
  * @file sorobanClient.ts
  * @description Browser-side service for interacting with the Soroban RPC and Horizon.
- *
- * This service centralizes all Stellar network interactions for the frontend.
- * It provides methods for both read-only contract calls (simulations) and
- * for building write transactions that can be signed by a wallet (e.g., Freighter).
- *
- * It encapsulates the `stellar-sdk`'s `SorobanRpc.Server` and `Horizon.Server`
- * instances, ensuring they are configured and used consistently.
- *
- * ## Adding New Operations
- *
- * 1. Identify the contract function name (e.g. `get_org`).
- * 2. Build the argument list using `nativeToScVal`.
- * 3. Call `simulateContractCall(functionName, args)` and convert the return
- *    value with `scValToNative`.
  */
 
 "use client";
@@ -31,6 +17,7 @@ import {
   Horizon,
 } from "@stellar/stellar-sdk";
 import type { MaintainerBalance, Organization } from "./contractTypes";
+import { PrincessError, PrincessErrorMessage } from "@very-princess/types";
 
 // ─── Network Configuration ────────────────────────────────────────────────────
 
@@ -61,11 +48,48 @@ class SorobanClient {
     });
   }
 
+  // ─── Error Handling ───────────────────────────────────────────────────────────
+
+  /**
+   * Decodes a Soroban error from a failed transaction result or simulation.
+   */
+  private _parseSorobanError(errorResponse: any): string {
+    try {
+      // Handle simulation error
+      if (errorResponse.error) {
+        return `Simulation failed: ${errorResponse.error}`;
+      }
+
+      // Handle transaction result error
+      const returnValue = errorResponse.returnValue;
+      if (returnValue) {
+        // @ts-ignore - _arm is internal to ScVal objects in stellar-sdk
+        if (returnValue._arm === "error") {
+          // @ts-ignore
+          const errorVal = returnValue._value;
+          // @ts-ignore
+          if (errorVal._arm === "contract") {
+            // @ts-ignore
+            const errorCode = errorVal._value as number;
+            const message = PrincessErrorMessage[errorCode as PrincessError];
+            if (message) return message;
+            return `Contract Error: ${errorCode}`;
+          }
+        }
+      }
+
+      return "Transaction failed on-chain. Please check your inputs and balance.";
+    } catch (err) {
+      console.error("Failed to parse Soroban error:", err);
+      return "Transaction failed. Error details could not be parsed.";
+    }
+  }
+
   // ─── Simulation Helper ────────────────────────────────────────────────────────
 
   private async _simulateContractCall(
     functionName: string,
-    args: Parameters<typeof nativeToScVal>[0][]
+    args: any[]
   ): Promise<ReturnType<typeof scValToNative>> {
     if (!CONTRACT_ID) {
       throw new Error("NEXT_PUBLIC_CONTRACT_ID is not set. Deploy the contract first.");
@@ -81,12 +105,11 @@ class SorobanClient {
     };
 
     const tx = new TransactionBuilder(
-      // @ts-ignore — minimal account duck-typing is sufficient for simulation
+      // @ts-ignore
       fakeAccount,
       { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE }
     )
       .addOperation(
-        // @ts-ignore — call() accepts string args
         contract.call(functionName, ...args.map((a) => nativeToScVal(a)))
       )
       .setTimeout(30)
@@ -95,10 +118,10 @@ class SorobanClient {
     const simResult = await this.rpcServer.simulateTransaction(tx);
 
     if (SorobanRpc.Api.isSimulationError(simResult)) {
-      throw new Error(`Contract simulation failed: ${simResult.error}`);
+      throw new Error(this._parseSorobanError(simResult));
     }
 
-    // @ts-ignore — returnVal present on success result
+    // @ts-ignore
     return scValToNative(simResult.result?.retval);
   }
 
@@ -111,23 +134,9 @@ class SorobanClient {
       id: String(map["id"]),
       name: String(map["name"]),
       admin: String(map["admin"]),
+      metadataCid: map["metadata_cid"] ? String(map["metadata_cid"]) : undefined,
     };
   }
-/**
- * Read a registered organization from the PayoutRegistry.
- *
- * @param orgId — Short Symbol ID of the organization (max 9 chars).
- */
-export async function readOrganization(orgId: string): Promise<Organization> {
-  const raw = await simulateContractCall("get_org", [orgId]);
-  const map = raw as Record<string, unknown>;
-  return {
-    id: String(map["id"]),
-    name: String(map["name"]),
-    admin: String(map["admin"]),
-    metadataCid: map["metadata_cid"] ? String(map["metadata_cid"]) : undefined,
-  };
-}
 
   public async readMaintainers(orgId: string): Promise<string[]> {
     const raw = await this._simulateContractCall("get_maintainers", [orgId]);
@@ -183,7 +192,6 @@ export async function readOrganization(orgId: string): Promise<Organization> {
       networkPassphrase: NETWORK_PASSPHRASE,
     })
       .addOperation(
-        // @ts-ignore
         contract.call(
           "fund_org",
           nativeToScVal(orgId),
@@ -196,7 +204,7 @@ export async function readOrganization(orgId: string): Promise<Organization> {
 
     const simResult = await this.rpcServer.simulateTransaction(tx);
     if (SorobanRpc.Api.isSimulationError(simResult)) {
-      throw new Error(`Simulation failed: ${simResult.error}`);
+      throw new Error(this._parseSorobanError(simResult));
     }
 
     const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
@@ -212,7 +220,6 @@ export async function readOrganization(orgId: string): Promise<Organization> {
       networkPassphrase: NETWORK_PASSPHRASE,
     })
       .addOperation(
-        // @ts-ignore
         contract.call("claim_payout", nativeToScVal(userAddress))
       )
       .setTimeout(60)
@@ -220,7 +227,70 @@ export async function readOrganization(orgId: string): Promise<Organization> {
 
     const simResult = await this.rpcServer.simulateTransaction(tx);
     if (SorobanRpc.Api.isSimulationError(simResult)) {
-      throw new Error(`Simulation failed: ${simResult.error}`);
+      throw new Error(this._parseSorobanError(simResult));
+    }
+
+    const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
+    return preparedTx.toXDR();
+  }
+
+  public async buildAllocatePayoutTransaction(
+    adminAddress: string,
+    orgId: string,
+    maintainerAddress: string,
+    amountStroops: bigint
+  ): Promise<string> {
+    const account = await this._loadAccount(adminAddress);
+    const contract = new Contract(CONTRACT_ID);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        contract.call("allocate_payout",
+          nativeToScVal(orgId, { type: "symbol" }),
+          nativeToScVal(maintainerAddress, { type: "address" }),
+          nativeToScVal(amountStroops, { type: "i128" }),
+          nativeToScVal(0, { type: "u64" })
+        )
+      )
+      .setTimeout(60)
+      .build();
+
+    const simResult = await this.rpcServer.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(simResult)) {
+      throw new Error(this._parseSorobanError(simResult));
+    }
+
+    const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
+    return preparedTx.toXDR();
+  }
+
+  public async buildUpdateOrgMetadataTransaction(
+    adminAddress: string,
+    orgId: string,
+    metadataCid: string
+  ): Promise<string> {
+    const account = await this._loadAccount(adminAddress);
+    const contract = new Contract(CONTRACT_ID);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        contract.call("update_org_metadata",
+          nativeToScVal(orgId, { type: "symbol" }),
+          nativeToScVal(metadataCid, { type: "string" })
+        )
+      )
+      .setTimeout(60)
+      .build();
+
+    const simResult = await this.rpcServer.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(simResult)) {
+      throw new Error(this._parseSorobanError(simResult));
     }
 
     const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
@@ -234,93 +304,6 @@ export async function readOrganization(orgId: string): Promise<Organization> {
     if (sendResult.status === "ERROR") {
       throw new Error(`Send error: ${JSON.stringify(sendResult)}`);
     }
-/**
- * Build, simulate, and prepare an unsigned XDR for `allocate_payout`.
- */
-export async function buildAllocatePayoutTransaction(
-  adminAddress: string,
-  orgId: string,
-  maintainerAddress: string,
-  amountStroops: bigint
-): Promise<string> {
-  const account = await loadAccount(adminAddress);
-  const contract = new Contract(CONTRACT_ID);
-
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
-  })
-    .addOperation(
-      // @ts-ignore
-      contract.call("allocate_payout",
-        nativeToScVal(orgId, { type: "symbol" }),
-        nativeToScVal(maintainerAddress, { type: "address" }),
-        nativeToScVal(amountStroops, { type: "i128" }),
-        nativeToScVal(0, { type: "u64" })
-      )
-    )
-    .setTimeout(60)
-    .build();
-
-  const simResult = await rpcServer.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
-    throw new Error(`Simulation failed: ${simResult.error}`);
-  }
-
-  const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
-  return preparedTx.toXDR();
-}
-
-/**
- * Build, simulate, and prepare an unsigned XDR for `update_org_metadata`.
- * 
- * @param adminAddress - The admin's public key.
- * @param orgId - Organization ID.
- * @param metadataCid - The new IPFS CID.
- */
-export async function buildUpdateOrgMetadataTransaction(
-  adminAddress: string,
-  orgId: string,
-  metadataCid: string
-): Promise<string> {
-  const account = await loadAccount(adminAddress);
-  const contract = new Contract(CONTRACT_ID);
-
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
-  })
-    .addOperation(
-      // @ts-ignore
-      contract.call("update_org_metadata",
-        nativeToScVal(orgId, { type: "symbol" }),
-        nativeToScVal(metadataCid, { type: "string" })
-      )
-    )
-    .setTimeout(60)
-    .build();
-
-  const simResult = await rpcServer.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
-    throw new Error(`Simulation failed: ${simResult.error}`);
-  }
-
-  const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
-  return preparedTx.toXDR();
-}
-
-/**
- * Submit a signed transaction to Soroban RPC and wait for confirmation.
- * @param signedXdr — Base64 string from Freighter.
- */
-export async function submitSignedTransaction(signedXdr: string): Promise<unknown> {
-  const tx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE);
-  
-  // Submit the transaction
-  const sendResult = await rpcServer.sendTransaction(tx as any);
-  if (sendResult.status === "ERROR") {
-    throw new Error(`Send error: ${JSON.stringify(sendResult)}`);
-  }
 
     return new Promise((resolve, reject) => {
       let attempts = 0;
@@ -338,7 +321,7 @@ export async function submitSignedTransaction(signedXdr: string): Promise<unknow
             resolve(scValToNative(getTxResponse.returnValue as any));
           } else if (getTxResponse.status === "FAILED") {
             clearInterval(interval);
-            reject(new Error(`Transaction failed on ledger`));
+            reject(new Error(this._parseSorobanError(getTxResponse)));
           }
         } catch (err) {
           // network issue, keep polling
@@ -350,15 +333,9 @@ export async function submitSignedTransaction(signedXdr: string): Promise<unknow
 
 // ─── Singleton Export ───────────────────────────────────────────────────────────
 
-/**
- * A singleton instance of the SorobanClient.
- * Components and hooks should import this instance directly for new code.
- */
 export const sorobanClient = new SorobanClient();
 
 // ─── Backward-Compatibility Exports ───────────────────────────────────────────
-// To avoid breaking existing imports, we also export the methods as standalone
-// functions. New code should prefer using the `sorobanClient` instance.
 
 export const readOrganization = sorobanClient.readOrganization.bind(sorobanClient);
 export const readMaintainers = sorobanClient.readMaintainers.bind(sorobanClient);
@@ -368,4 +345,8 @@ export const readAccountXlmBalance = sorobanClient.readAccountXlmBalance.bind(so
 export const buildFundOrgTransaction = sorobanClient.buildFundOrgTransaction.bind(sorobanClient);
 export const buildClaimPayoutTransaction =
   sorobanClient.buildClaimPayoutTransaction.bind(sorobanClient);
+export const buildAllocatePayoutTransaction =
+  sorobanClient.buildAllocatePayoutTransaction.bind(sorobanClient);
+export const buildUpdateOrgMetadataTransaction =
+  sorobanClient.buildUpdateOrgMetadataTransaction.bind(sorobanClient);
 export const submitSignedTransaction = sorobanClient.submitSignedTransaction.bind(sorobanClient);
