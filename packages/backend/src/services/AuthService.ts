@@ -170,13 +170,7 @@ export class AuthService {
       return false;
     }
 
-    // Verify nonce matches
-    if (stored.nonce !== nonce) {
-      return false;
-    }
-
-    // Nonce is valid, it will be cleaned up automatically by Redis TTL
-    return true;
+    return stored.nonce === nonce;
   }
 }
 

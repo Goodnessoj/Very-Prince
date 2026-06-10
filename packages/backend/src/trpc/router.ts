@@ -28,8 +28,7 @@ export const appRouter = t.router({
         
         if (cachedResult) {
           try {
-            const orgData = JSON.parse(cachedResult);
-            return orgData;
+            return JSON.parse(cachedResult);
           } catch (error) {
             // Cache corrupted, continue to fetch from contract
             console.warn(`Cache corruption for key ${cacheKey}:`, error);

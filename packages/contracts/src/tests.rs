@@ -3,7 +3,7 @@
 mod tests {
     use crate::{PayoutParams, PayoutRegistry, PayoutRegistryClient};
     use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::{symbol_short, token, Address, Env, String, Symbol, Vec, IntoVal};
+    use soroban_sdk::{symbol_short, token, Address, Env, IntoVal, String, Symbol, Vec};
 
     // ── Test Helpers ─────────────────────────────────────────────────────────
 
@@ -34,7 +34,7 @@ mod tests {
         admins.push_back(admin1.clone());
         admins.push_back(admin2.clone());
         admins.push_back(admin3.clone());
-        
+
         client.init(&token_contract_id.address(), &admins, &2);
 
         Setup {
@@ -45,11 +45,7 @@ mod tests {
         }
     }
 
-    fn register_test_org(
-        env: &Env,
-        client: &PayoutRegistryClient<'_>,
-        org_sym: Symbol,
-    ) -> Address {
+    fn register_test_org(env: &Env, client: &PayoutRegistryClient<'_>, org_sym: Symbol) -> Address {
         let admin = Address::generate(env);
         client.register_org(
             &org_sym,
@@ -113,7 +109,13 @@ mod tests {
         let maintainer = Address::generate(&env);
         client.add_maintainer(&org_sym, &maintainer);
 
-        let result = client.try_allocate_payout(&org_sym, &admin, &maintainer, &5_000_000_i128, &1234567890_u64);
+        let result = client.try_allocate_payout(
+            &org_sym,
+            &admin,
+            &maintainer,
+            &5_000_000_i128,
+            &1234567890_u64,
+        );
         assert!(result.is_err());
     }
 
@@ -170,9 +172,18 @@ mod tests {
         client.fund_org(&org_sym, &donor, &100_000_000);
 
         let mut payouts = Vec::new(&env);
-        payouts.push_back(PayoutParams { maintainer: m1.clone(), amount: 10_000_000 });
-        payouts.push_back(PayoutParams { maintainer: m2.clone(), amount: 20_000_000 });
-        payouts.push_back(PayoutParams { maintainer: m3.clone(), amount: 30_000_000 });
+        payouts.push_back(PayoutParams {
+            maintainer: m1.clone(),
+            amount: 10_000_000,
+        });
+        payouts.push_back(PayoutParams {
+            maintainer: m2.clone(),
+            amount: 20_000_000,
+        });
+        payouts.push_back(PayoutParams {
+            maintainer: m3.clone(),
+            amount: 30_000_000,
+        });
 
         client.batch_allocate(&admin, &org_sym, &payouts);
 
@@ -200,8 +211,14 @@ mod tests {
         client.fund_org(&org_sym, &donor, &50_000_000);
 
         let mut payouts = Vec::new(&env);
-        payouts.push_back(PayoutParams { maintainer: m1.clone(), amount: 25_000_000 });
-        payouts.push_back(PayoutParams { maintainer: m2.clone(), amount: 25_000_000 });
+        payouts.push_back(PayoutParams {
+            maintainer: m1.clone(),
+            amount: 25_000_000,
+        });
+        payouts.push_back(PayoutParams {
+            maintainer: m2.clone(),
+            amount: 25_000_000,
+        });
 
         client.batch_allocate(&admin, &org_sym, &payouts);
 
@@ -226,7 +243,10 @@ mod tests {
         client.fund_org(&org_sym, &donor, &5_000_000);
 
         let mut payouts = Vec::new(&env);
-        payouts.push_back(PayoutParams { maintainer: m1.clone(), amount: 10_000_000 });
+        payouts.push_back(PayoutParams {
+            maintainer: m1.clone(),
+            amount: 10_000_000,
+        });
 
         let result = client.try_batch_allocate(&admin, &org_sym, &payouts);
         assert!(result.is_err());
@@ -252,7 +272,10 @@ mod tests {
 
         let impostor = Address::generate(&env);
         let mut payouts = Vec::new(&env);
-        payouts.push_back(PayoutParams { maintainer: m1.clone(), amount: 5_000_000 });
+        payouts.push_back(PayoutParams {
+            maintainer: m1.clone(),
+            amount: 5_000_000,
+        });
 
         let result = client.try_batch_allocate(&impostor, &org_sym, &payouts);
         assert!(result.is_err());
@@ -279,7 +302,10 @@ mod tests {
 
         // Try to batch allocate org_a funds to a maintainer from org_b
         let mut payouts = Vec::new(&env);
-        payouts.push_back(PayoutParams { maintainer: m1.clone(), amount: 5_000_000 });
+        payouts.push_back(PayoutParams {
+            maintainer: m1.clone(),
+            amount: 5_000_000,
+        });
 
         let result = client.try_batch_allocate(&admin_a, &org_a, &payouts);
         assert!(result.is_err());
@@ -295,7 +321,10 @@ mod tests {
         client.add_maintainer(&org_sym, &m1);
 
         let mut payouts = Vec::new(&env);
-        payouts.push_back(PayoutParams { maintainer: m1.clone(), amount: 0 });
+        payouts.push_back(PayoutParams {
+            maintainer: m1.clone(),
+            amount: 0,
+        });
 
         let result = client.try_batch_allocate(&admin, &org_sym, &payouts);
         assert!(result.is_err());
@@ -329,7 +358,10 @@ mod tests {
         client.fund_org(&org_sym, &donor, &30_000_000);
 
         let mut payouts = Vec::new(&env);
-        payouts.push_back(PayoutParams { maintainer: m1.clone(), amount: 12_000_000 });
+        payouts.push_back(PayoutParams {
+            maintainer: m1.clone(),
+            amount: 12_000_000,
+        });
         client.batch_allocate(&admin, &org_sym, &payouts);
 
         assert_eq!(client.get_claimable_balance(&m1), 12_000_000);
@@ -395,12 +427,12 @@ mod tests {
         let admin1 = Address::generate(&env);
         let admin2 = Address::generate(&env);
         let admin3 = Address::generate(&env);
-        
+
         let mut admins = Vec::new(&env);
         admins.push_back(admin1.clone());
         admins.push_back(admin2.clone());
         admins.push_back(admin3.clone());
-        
+
         // Initialize with threshold of 2 (requires 2-of-3 signatures)
         client.init(&token_contract_id.address(), &admins, &2);
 
@@ -410,10 +442,9 @@ mod tests {
         assert_eq!(multisig_admin.threshold, 2);
 
         let hash_bytes = [
-            0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14,
-            0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
-            0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
-            0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55_u8,
+            0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14, 0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f,
+            0xb9, 0x24, 0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c, 0xa4, 0x95, 0x99, 0x1b,
+            0x78, 0x52, 0xb8, 0x55_u8,
         ];
         let new_wasm_hash = soroban_sdk::BytesN::from_array(&env, &hash_bytes);
 
@@ -421,18 +452,16 @@ mod tests {
         let mut signers1 = Vec::new(&env);
         signers1.push_back(admin1.clone());
 
-        env.mock_auths(&[
-            soroban_sdk::testutils::MockAuth {
-                address: &admin1,
-                invoke: &soroban_sdk::testutils::MockAuthInvoke {
-                    contract: &contract_id,
-                    fn_name: "upgrade",
-                    args: (signers1.clone(), new_wasm_hash.clone()).into_val(&env),
-                    sub_invokes: &[],
-                },
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin1,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "upgrade",
+                args: (signers1.clone(), new_wasm_hash.clone()).into_val(&env),
+                sub_invokes: &[],
             },
-        ]);
-        
+        }]);
+
         let result = client.try_upgrade(&signers1, &new_wasm_hash);
         assert!(result.is_err());
 
@@ -461,7 +490,7 @@ mod tests {
                 },
             },
         ]);
-        
+
         let result = client.try_upgrade(&signers2, &new_wasm_hash);
         assert!(result.is_ok());
 
@@ -490,7 +519,7 @@ mod tests {
                 },
             },
         ]);
-        
+
         let result = client.try_pause_protocol(&signers_pause);
         assert!(result.is_ok());
         assert_eq!(client.get_protocol_state(), crate::ProtocolState::Paused);
@@ -499,18 +528,16 @@ mod tests {
         let mut signers_unpause1 = Vec::new(&env);
         signers_unpause1.push_back(admin1.clone());
 
-        env.mock_auths(&[
-            soroban_sdk::testutils::MockAuth {
-                address: &admin1,
-                invoke: &soroban_sdk::testutils::MockAuthInvoke {
-                    contract: &contract_id,
-                    fn_name: "unpause_protocol",
-                    args: (signers_unpause1.clone(),).into_val(&env),
-                    sub_invokes: &[],
-                },
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin1,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "unpause_protocol",
+                args: (signers_unpause1.clone(),).into_val(&env),
+                sub_invokes: &[],
             },
-        ]);
-        
+        }]);
+
         let result = client.try_unpause_protocol(&signers_unpause1);
         assert!(result.is_err());
 
@@ -539,7 +566,7 @@ mod tests {
                 },
             },
         ]);
-        
+
         let result = client.try_unpause_protocol(&signers_unpause2);
         assert!(result.is_ok());
         assert_eq!(client.get_protocol_state(), crate::ProtocolState::Active);

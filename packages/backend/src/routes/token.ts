@@ -71,7 +71,6 @@ export async function tokenRoutes(fastify: FastifyInstance) {
       return reply.status(400).send({ error: "Address is required" });
     }
 
-    const result = await tokenController.verifyToken(address);
-    return result;
+    return await tokenController.verifyToken(address);
   });
 }

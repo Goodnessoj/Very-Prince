@@ -108,7 +108,6 @@ export class IndexerService {
         console.log(`Processing ${eventsResponse.events.length} new events...`);
 
         // Process each event with idempotent database writes
-        const processedEvents: Array<{ event: ContractEvent; eventIndex: number }> = [];
 
         for (let i = 0; i < eventsResponse.events.length; i++) {
           const rawEvent = eventsResponse.events[i];
@@ -129,7 +128,6 @@ export class IndexerService {
 
             // Extract event index for unique composite key
             const eventIndex = i; // Use array index as event index within this batch
-            processedEvents.push({ event: contractEvent, eventIndex });
 
             console.log(`Processing event: ${contractEvent.eventName}`);
 

@@ -126,7 +126,7 @@ export const exportRoutes: FastifyPluginAsync = async (fastify) => {
           let maintainerAddress = address;
           let amountStroops = "0";
           let amountXlm = "0";
-          let usdValue = tx.volumeUSD?.toString() || "0";
+          const usdValue = tx.volumeUSD?.toString() || "0";
 
           try {
             // Parse raw data to extract additional information

@@ -52,8 +52,7 @@ const getNetworkFromFreighter = async (): Promise<NetworkType> => {
 
 const getPublicKeyFromFreighter = async (): Promise<string | null> => {
   try {
-    const publicKey = await freighterApi.getPublicKey();
-    return publicKey;
+    return await freighterApi.getPublicKey();
   } catch (error) {
     console.warn('Failed to get public key from Freighter:', error);
     return null;

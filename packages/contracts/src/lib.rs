@@ -1,7 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, token, Address, Bytes, BytesN, Env, FromVal, IntoVal, String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, token,
+    Address, Bytes, BytesN, Env, FromVal, IntoVal, String, Symbol, Vec,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -149,7 +150,7 @@ const PERSISTENT_LIFETIME_THRESHOLD: u32 = 120_960;
 // ─────────────────────────────────────────────────────────────────────────────
 // Technical Design Notes: Soroban Storage Model
 //
-// Soroban uses a state-archiving model to keep the ledger size manageable. 
+// Soroban uses a state-archiving model to keep the ledger size manageable.
 // Every entry (Persistent, Instance, Temporary) has a Time-To-Live (TTL).
 //
 // - Persistent: High-cost, long-lived data (Orgs, Maintainers).
@@ -178,37 +179,58 @@ impl PayoutRegistry {
         if env.storage().persistent().has(&DataKey::Token) {
             panic_with_error!(&env, PrinceError::AlreadyInitialized);
         }
-        
+
         if admins.is_empty() {
             panic_with_error!(&env, PrinceError::EmptyAdminList);
         }
-        
+
         if threshold == 0 || threshold > admins.len() as u32 {
             panic_with_error!(&env, PrinceError::InvalidThreshold);
         }
-        
+
         env.storage().persistent().set(&DataKey::Token, &token);
-        env.storage().persistent().extend_ttl(&DataKey::Token, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
-        
+        env.storage().persistent().extend_ttl(
+            &DataKey::Token,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+
         let multisig_admin = MultisigAdmin {
             admins: admins.clone(),
             threshold,
         };
-        env.storage().persistent().set(&DataKey::MultisigAdmin, &multisig_admin);
-        env.storage().persistent().extend_ttl(&DataKey::MultisigAdmin, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
-        env.storage().persistent().set(&DataKey::ProtocolState, &ProtocolState::Active);
-        env.storage().persistent().extend_ttl(&DataKey::ProtocolState, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
-        
+        env.storage()
+            .persistent()
+            .set(&DataKey::MultisigAdmin, &multisig_admin);
+        env.storage().persistent().extend_ttl(
+            &DataKey::MultisigAdmin,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolState, &ProtocolState::Active);
+        env.storage().persistent().extend_ttl(
+            &DataKey::ProtocolState,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+
         env.events().publish(
-            (Symbol::new(&env, "VeryPrince"), Symbol::new(&env, "Initialized")),
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "Initialized"),
+            ),
             (token, admins.len(), threshold),
         );
     }
 
     pub fn get_token(env: Env) -> Address {
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Token, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Token,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
         env.storage()
             .persistent()
             .get(&DataKey::Token)
@@ -220,9 +242,11 @@ impl PayoutRegistry {
     /// # Panics
     /// If the contract has not been initialized.
     pub fn get_multisig_admin(env: Env) -> MultisigAdmin {
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::MultisigAdmin, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &DataKey::MultisigAdmin,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
         env.storage()
             .persistent()
             .get(&DataKey::MultisigAdmin)
@@ -234,9 +258,11 @@ impl PayoutRegistry {
     /// # Panics
     /// If the contract has not been initialized.
     pub fn get_protocol_state(env: Env) -> ProtocolState {
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::ProtocolState, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &DataKey::ProtocolState,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
         env.storage()
             .persistent()
             .get(&DataKey::ProtocolState)
@@ -244,29 +270,29 @@ impl PayoutRegistry {
     }
 
     /// Assert that the protocol is currently active.
-    /// 
+    ///
     /// # Panics
     /// If the protocol is paused.
     fn assert_active(env: &Env) {
         let state = Self::get_protocol_state(env.clone());
         match state {
-            ProtocolState::Active => {}, // Continue normally
+            ProtocolState::Active => {} // Continue normally
             ProtocolState::Paused => panic_with_error!(env, PrinceError::ProtocolPaused),
         }
     }
 
     /// Verify that the caller has sufficient multisig authorization.
-    /// 
+    ///
     /// This function checks that at least `threshold` admins from the multisig
     /// configuration have authorized the action. In Soroban, this is handled
     /// natively by the Stellar network's account structure, but we need to
     /// verify that the authorization payload contains the required signatures.
-    /// 
+    ///
     /// # Panics
     /// If insufficient signatures are provided
     fn verify_multisig_auth(env: &Env, signers: &Vec<Address>) {
         let multisig_admin = Self::get_multisig_admin(env.clone());
-        
+
         // Verify unique signers count meets threshold
         let mut unique_signers = Vec::new(env);
         for signer in signers.iter() {
@@ -274,11 +300,11 @@ impl PayoutRegistry {
                 unique_signers.push_back(signer.clone());
             }
         }
-        
+
         if unique_signers.len() < multisig_admin.threshold {
             panic_with_error!(env, PrinceError::InsufficientMultisigAuth);
         }
-        
+
         // Check that each signer is a registered admin and has authorized this call
         for signer in unique_signers.iter() {
             if !multisig_admin.admins.contains(&signer) {
@@ -294,11 +320,11 @@ impl PayoutRegistry {
 
     /**
      * Register a new organization on the contract.
-     * 
+     *
      * This function generates a deterministic organization ID based on the admin's
      * address and the organization's name. It initializes the organization's
      * data structure, budget, and maintainer list in persistent storage.
-     * 
+     *
      * @param env - The Soroban execution environment.
      * @param admin - The Stellar address of the initial administrator.
      * @param name - The human-readable name of the organization.
@@ -323,40 +349,55 @@ impl PayoutRegistry {
             metadata_cid: None,
         };
         env.storage().persistent().set(&org_key, &org);
-        env.storage().persistent().extend_ttl(&org_key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &org_key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         env.storage()
             .persistent()
             .set(&DataKey::OrgAdmin(id.clone()), &admin);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::OrgAdmin(id.clone()), PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &DataKey::OrgAdmin(id.clone()),
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         let empty_list: Vec<Address> = Vec::new(&env);
         env.storage()
             .persistent()
             .set(&DataKey::OrgMaintainers(id.clone()), &empty_list);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::OrgMaintainers(id.clone()), PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &DataKey::OrgMaintainers(id.clone()),
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         env.storage()
             .persistent()
             .set(&DataKey::OrgBudget(id.clone()), &0_i128);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::OrgBudget(id.clone()), PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &DataKey::OrgBudget(id.clone()),
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         env.events().publish(
-            (Symbol::new(&env, "VeryPrince"), Symbol::new(&env, "org_registered")),
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "org_registered"),
+            ),
             (id.clone(), admin.clone()),
         );
     }
 
     pub fn get_org(env: Env, id: Symbol) -> Organization {
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Organization(id.clone()), PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Organization(id.clone()),
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
         env.storage()
             .persistent()
             .get(&DataKey::Organization(id))
@@ -369,7 +410,9 @@ impl PayoutRegistry {
         admin.require_auth();
 
         let org_key = DataKey::Organization(id.clone());
-        let mut org: Organization = env.storage().persistent()
+        let mut org: Organization = env
+            .storage()
+            .persistent()
             .get(&org_key)
             .unwrap_or_else(|| panic_with_error!(&env, PrinceError::OrgNotFound));
 
@@ -388,17 +431,24 @@ impl PayoutRegistry {
 
         org.metadata_cid = Some(metadata_cid.clone());
         env.storage().persistent().set(&org_key, &org);
-        env.storage().persistent().extend_ttl(&org_key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &org_key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         env.events().publish(
-            (Symbol::new(&env, "VeryPrince"), Symbol::new(&env, "OrgMetadataUpdated")),
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "OrgMetadataUpdated"),
+            ),
             (id, metadata_cid),
         );
     }
 
     pub fn fund_org(env: Env, org_id: Symbol, from: Address, amount: i128) {
         Self::assert_active(&env);
-        
+
         // Strict authorization: bind the signature to the exact parameters
         from.require_auth_for_args((org_id.clone(), from.clone(), amount).into_val(&env));
 
@@ -417,13 +467,15 @@ impl PayoutRegistry {
         // Effects: Update the Persistent Storage first (CEI)
         let budget_key = DataKey::OrgBudget(org_id.clone());
         let current_budget: i128 = env.storage().persistent().get(&budget_key).unwrap_or(0);
-        let new_budget = current_budget.checked_add(amount).unwrap_or_else(|| panic_with_error!(&env, PrinceError::BudgetOverflow));
-        env.storage()
-            .persistent()
-            .set(&budget_key, &new_budget);
-        env.storage()
-            .persistent()
-            .extend_ttl(&budget_key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        let new_budget = current_budget
+            .checked_add(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, PrinceError::BudgetOverflow));
+        env.storage().persistent().set(&budget_key, &new_budget);
+        env.storage().persistent().extend_ttl(
+            &budget_key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         // Interactions: Execute the token transfer as the absolute last step
         // This follows the Check-Effects-Interactions pattern.
@@ -432,7 +484,10 @@ impl PayoutRegistry {
         token_client.transfer(&from, &env.current_contract_address(), &amount);
 
         env.events().publish(
-            (Symbol::new(&env, "VeryPrince"), Symbol::new(&env, "OrgFunded")),
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "OrgFunded"),
+            ),
             (org_id, from, amount),
         );
     }
@@ -440,7 +495,7 @@ impl PayoutRegistry {
     pub fn add_admin(env: Env, org_id: Symbol, admin: Address, new_admin: Address) {
         admin.require_auth();
         let mut org = Self::get_org(env.clone(), org_id.clone());
-        
+
         // Authorization: Check if the passed admin is an existing admin
         if !org.admins.contains(&admin) {
             panic_with_error!(&env, PrinceError::NotAuthorized);
@@ -457,11 +512,20 @@ impl PayoutRegistry {
         }
 
         org.admins.push_back(new_admin.clone());
-        env.storage().persistent().set(&DataKey::Organization(org_id.clone()), &org);
-        env.storage().persistent().extend_ttl(&DataKey::Organization(org_id.clone()), PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Organization(org_id.clone()), &org);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Organization(org_id.clone()),
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         env.events().publish(
-            (Symbol::new(&env, "VeryPrince"), Symbol::new(&env, "AdminAdded")),
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "AdminAdded"),
+            ),
             (org_id, new_admin),
         );
     }
@@ -469,7 +533,7 @@ impl PayoutRegistry {
     pub fn remove_admin(env: Env, org_id: Symbol, admin: Address, admin_to_remove: Address) {
         admin.require_auth();
         let mut org = Self::get_org(env.clone(), org_id.clone());
-        
+
         // Authorization: Check if the passed admin is an existing admin
         if !org.admins.contains(&admin) {
             panic_with_error!(&env, PrinceError::NotAuthorized);
@@ -490,22 +554,33 @@ impl PayoutRegistry {
         match index {
             Some(i) => {
                 org.admins.remove(i);
-                env.storage().persistent().set(&DataKey::Organization(org_id.clone()), &org);
-                env.storage().persistent().extend_ttl(&DataKey::Organization(org_id.clone()), PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
-            },
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Organization(org_id.clone()), &org);
+                env.storage().persistent().extend_ttl(
+                    &DataKey::Organization(org_id.clone()),
+                    PERSISTENT_LIFETIME_THRESHOLD,
+                    PERSISTENT_BUMP_AMOUNT,
+                );
+            }
             None => panic_with_error!(&env, PrinceError::NotAnAdmin),
         }
 
         env.events().publish(
-            (Symbol::new(&env, "VeryPrince"), Symbol::new(&env, "AdminRemoved")),
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "AdminRemoved"),
+            ),
             (org_id, admin_to_remove),
         );
     }
 
     pub fn get_org_budget(env: Env, id: Symbol) -> i128 {
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::OrgBudget(id.clone()), PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &DataKey::OrgBudget(id.clone()),
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
         env.storage()
             .persistent()
             .get(&DataKey::OrgBudget(id))
@@ -535,16 +610,24 @@ impl PayoutRegistry {
         env.storage()
             .persistent()
             .set(&DataKey::MaintainerOrg(maintainer.clone()), &org_id);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::MaintainerOrg(maintainer.clone()), PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &DataKey::MaintainerOrg(maintainer.clone()),
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::MaintainerBalance(maintainer.clone()), &MaintainerPayout { amount: 0, unlock_timestamp: 0 });
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::MaintainerBalance(maintainer.clone()), PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().set(
+            &DataKey::MaintainerBalance(maintainer.clone()),
+            &MaintainerPayout {
+                amount: 0,
+                unlock_timestamp: 0,
+            },
+        );
+        env.storage().persistent().extend_ttl(
+            &DataKey::MaintainerBalance(maintainer.clone()),
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         let maintainer_list_key = DataKey::OrgMaintainers(org_id.clone());
         let mut maintainers: Vec<Address> = env
@@ -556,20 +639,27 @@ impl PayoutRegistry {
         env.storage()
             .persistent()
             .set(&maintainer_list_key, &maintainers);
-        env.storage()
-            .persistent()
-            .extend_ttl(&maintainer_list_key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &maintainer_list_key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         env.events().publish(
-    (Symbol::new(&env, "VeryPrince"), Symbol::new(&env, "MaintainerAdded")),
-    (org_id, maintainer),
-);
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "MaintainerAdded"),
+            ),
+            (org_id, maintainer),
+        );
     }
 
     pub fn get_maintainer(env: Env, address: Address) -> Maintainer {
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::MaintainerOrg(address.clone()), PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &DataKey::MaintainerOrg(address.clone()),
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
         let org_id: Symbol = env
             .storage()
             .persistent()
@@ -579,9 +669,11 @@ impl PayoutRegistry {
     }
 
     pub fn get_maintainers(env: Env, org_id: Symbol) -> Vec<Address> {
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::OrgMaintainers(org_id.clone()), PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &DataKey::OrgMaintainers(org_id.clone()),
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
         env.storage()
             .persistent()
             .get(&DataKey::OrgMaintainers(org_id))
@@ -592,16 +684,32 @@ impl PayoutRegistry {
     // Payout Allocation & Claiming
     // ─────────────────────────────────────────────────────────────────────────
 
-    pub fn allocate_payout(env: Env, org_id: Symbol, admin: Address, maintainer: Address, amount: i128, unlock_timestamp: u64) {
+    pub fn allocate_payout(
+        env: Env,
+        org_id: Symbol,
+        admin: Address,
+        maintainer: Address,
+        amount: i128,
+        unlock_timestamp: u64,
+    ) {
         Self::assert_active(&env);
         let org = Self::get_org(env.clone(), org_id.clone());
-        
+
         // Authorization: Check if the passed admin is an existing admin
         if !org.admins.contains(&admin) {
             panic_with_error!(&env, PrinceError::NotAuthorized);
         }
 
-        admin.require_auth_for_args((org_id.clone(), admin.clone(), maintainer.clone(), amount, unlock_timestamp).into_val(&env));
+        admin.require_auth_for_args(
+            (
+                org_id.clone(),
+                admin.clone(),
+                maintainer.clone(),
+                amount,
+                unlock_timestamp,
+            )
+                .into_val(&env),
+        );
 
         if amount <= 0 {
             panic_with_error!(&env, PrinceError::InvalidAmount);
@@ -625,23 +733,40 @@ impl PayoutRegistry {
         env.storage()
             .persistent()
             .set(&budget_key, &(current_budget - amount));
-        env.storage()
-            .persistent()
-            .extend_ttl(&budget_key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &budget_key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         let balance_key = DataKey::MaintainerBalance(maintainer.clone());
         let mut current_payout: MaintainerPayout = env
             .storage()
             .persistent()
             .get(&balance_key)
-            .unwrap_or(MaintainerPayout { amount: 0, unlock_timestamp: 0 });
-        current_payout.amount = current_payout.amount.checked_add(amount).unwrap_or_else(|| panic_with_error!(&env, PrinceError::PayoutOverflow));
+            .unwrap_or(MaintainerPayout {
+                amount: 0,
+                unlock_timestamp: 0,
+            });
+        current_payout.amount = current_payout
+            .amount
+            .checked_add(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, PrinceError::PayoutOverflow));
         current_payout.unlock_timestamp = unlock_timestamp;
-        env.storage().persistent().set(&balance_key, &current_payout);
-        env.storage().persistent().extend_ttl(&balance_key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage()
+            .persistent()
+            .set(&balance_key, &current_payout);
+        env.storage().persistent().extend_ttl(
+            &balance_key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         env.events().publish(
-            (Symbol::new(&env, "VeryPrince"), Symbol::new(&env, "PayoutAllocated")),
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "PayoutAllocated"),
+            ),
             (org_id, maintainer, amount),
         );
     }
@@ -651,12 +776,7 @@ impl PayoutRegistry {
     /// Admin auth is required only once for the entire batch.
     /// The total sum of all payouts must not exceed the organization's current budget.
     /// Maximum batch size is 100 entries to stay within Soroban CPU/instruction limits.
-    pub fn batch_allocate(
-        env: Env,
-        admin: Address,
-        org_id: Symbol,
-        payouts: Vec<PayoutParams>,
-    ) {
+    pub fn batch_allocate(env: Env, admin: Address, org_id: Symbol, payouts: Vec<PayoutParams>) {
         // Require admin auth once for the entire batch
         admin.require_auth();
 
@@ -697,7 +817,9 @@ impl PayoutRegistry {
             if maintainer_org != org_id {
                 panic_with_error!(&env, PrinceError::MaintainerOrgMismatch);
             }
-            total = total.checked_add(entry.amount).unwrap_or_else(|| panic_with_error!(&env, PrinceError::PayoutOverflow));
+            total = total
+                .checked_add(entry.amount)
+                .unwrap_or_else(|| panic_with_error!(&env, PrinceError::PayoutOverflow));
         }
 
         // Verify the org has enough budget to cover the entire batch
@@ -711,9 +833,11 @@ impl PayoutRegistry {
         env.storage()
             .persistent()
             .set(&budget_key, &(current_budget - total));
-        env.storage()
-            .persistent()
-            .extend_ttl(&budget_key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &budget_key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         // Accumulate each maintainer's claimable balance
         for i in 0..payouts.len() {
@@ -723,14 +847,22 @@ impl PayoutRegistry {
                 .storage()
                 .persistent()
                 .get(&balance_key)
-                .unwrap_or(MaintainerPayout { amount: 0, unlock_timestamp: 0 });
-            current_payout.amount = current_payout.amount.checked_add(entry.amount).unwrap_or_else(|| panic_with_error!(&env, PrinceError::PayoutOverflow));
+                .unwrap_or(MaintainerPayout {
+                    amount: 0,
+                    unlock_timestamp: 0,
+                });
+            current_payout.amount = current_payout
+                .amount
+                .checked_add(entry.amount)
+                .unwrap_or_else(|| panic_with_error!(&env, PrinceError::PayoutOverflow));
             env.storage()
                 .persistent()
                 .set(&balance_key, &current_payout);
-            env.storage()
-                .persistent()
-                .extend_ttl(&balance_key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+            env.storage().persistent().extend_ttl(
+                &balance_key,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
         }
 
         // Emit a single batch_allocated event
@@ -741,28 +873,37 @@ impl PayoutRegistry {
     }
 
     pub fn get_claimable_balance(env: Env, maintainer: Address) -> i128 {
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::MaintainerBalance(maintainer.clone()), PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
-        let payout: MaintainerPayout = env.storage()
+        env.storage().persistent().extend_ttl(
+            &DataKey::MaintainerBalance(maintainer.clone()),
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+        let payout: MaintainerPayout = env
+            .storage()
             .persistent()
             .get(&DataKey::MaintainerBalance(maintainer))
-            .unwrap_or(MaintainerPayout { amount: 0, unlock_timestamp: 0 });
+            .unwrap_or(MaintainerPayout {
+                amount: 0,
+                unlock_timestamp: 0,
+            });
         payout.amount
     }
 
     pub fn claim_payout(env: Env, maintainer: Address) -> i128 {
         Self::assert_active(&env);
-        
+
         // Strict authorization: ensure the maintainer is the one claiming
         maintainer.require_auth_for_args((maintainer.clone(),).into_val(&env));
 
         let balance_key = DataKey::MaintainerBalance(maintainer.clone());
-        let mut payout: MaintainerPayout = env
-            .storage()
-            .persistent()
-            .get(&balance_key)
-            .unwrap_or(MaintainerPayout { amount: 0, unlock_timestamp: 0 });
+        let mut payout: MaintainerPayout =
+            env.storage()
+                .persistent()
+                .get(&balance_key)
+                .unwrap_or(MaintainerPayout {
+                    amount: 0,
+                    unlock_timestamp: 0,
+                });
 
         if payout.amount == 0 {
             panic_with_error!(&env, PrinceError::NoClaimableBalance);
@@ -778,16 +919,27 @@ impl PayoutRegistry {
         // Reset balance BEFORE transfer to prevent reentrancy or state corruption
         payout.amount = 0;
         env.storage().persistent().set(&balance_key, &payout);
-        env.storage().persistent().extend_ttl(&balance_key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &balance_key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         // Interactions: Execute the token transfer as the absolute last step
         // This follows the Check-Effects-Interactions pattern.
         let token = Self::get_token(env.clone());
         let token_client = token::Client::new(&env, &token);
-        token_client.transfer(&env.current_contract_address(), &maintainer, &amount_to_claim);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &maintainer,
+            &amount_to_claim,
+        );
 
         env.events().publish(
-            (Symbol::new(&env, "VeryPrince"), Symbol::new(&env, "PayoutClaimed")),
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "PayoutClaimed"),
+            ),
             (maintainer, amount_to_claim),
         );
 
@@ -799,44 +951,62 @@ impl PayoutRegistry {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Pause the protocol. Requires multisig authorization from protocol admins.
-    /// 
+    ///
     /// When paused, all fund_org, allocate_payout, and claim_payout operations
     /// will be blocked with a "protocol is paused" error.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     pub fn pause_protocol(env: Env, signers: Vec<Address>) {
         // Verify multisig authorization
         Self::verify_multisig_auth(&env, &signers);
-        
+
         // Update the protocol state to paused
-        env.storage().persistent().set(&DataKey::ProtocolState, &ProtocolState::Paused);
-        env.storage().persistent().extend_ttl(&DataKey::ProtocolState, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
-        
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolState, &ProtocolState::Paused);
+        env.storage().persistent().extend_ttl(
+            &DataKey::ProtocolState,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+
         // Emit pause event
         env.events().publish(
-            (Symbol::new(&env, "VeryPrince"), Symbol::new(&env, "ProtocolPaused")),
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "ProtocolPaused"),
+            ),
             env.ledger().timestamp(),
         );
     }
 
     /// Unpause the protocol. Requires multisig authorization from protocol admins.
-    /// 
+    ///
     /// When unpaused, normal operations resume.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     pub fn unpause_protocol(env: Env, signers: Vec<Address>) {
         // Verify multisig authorization
         Self::verify_multisig_auth(&env, &signers);
-        
+
         // Update the protocol state to active
-        env.storage().persistent().set(&DataKey::ProtocolState, &ProtocolState::Active);
-        env.storage().persistent().extend_ttl(&DataKey::ProtocolState, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
-        
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolState, &ProtocolState::Active);
+        env.storage().persistent().extend_ttl(
+            &DataKey::ProtocolState,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+
         // Emit unpause event
         env.events().publish(
-            (Symbol::new(&env, "VeryPrince"), Symbol::new(&env, "ProtocolUnpaused")),
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "ProtocolUnpaused"),
+            ),
             env.ledger().timestamp(),
         );
     }
@@ -859,7 +1029,10 @@ impl PayoutRegistry {
             .persistent()
             .set(&DataKey::PendingAdmin, &new_admin);
         env.events().publish(
-            (Symbol::new(&env, "VeryPrince"), Symbol::new(&env, "AdminProposed")),
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "AdminProposed"),
+            ),
             new_admin,
         );
     }
@@ -885,13 +1058,19 @@ impl PayoutRegistry {
         // Build a new single-member multisig with threshold 1
         let mut admins = Vec::new(&env);
         admins.push_back(new_admin.clone());
-        let multisig_admin = MultisigAdmin { admins, threshold: 1 };
+        let multisig_admin = MultisigAdmin {
+            admins,
+            threshold: 1,
+        };
         env.storage()
             .persistent()
             .set(&DataKey::MultisigAdmin, &multisig_admin);
         env.storage().persistent().remove(&DataKey::PendingAdmin);
         env.events().publish(
-            (Symbol::new(&env, "VeryPrince"), Symbol::new(&env, "admin_transferred")),
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "admin_transferred"),
+            ),
             new_admin,
         );
     }
@@ -901,27 +1080,31 @@ impl PayoutRegistry {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Upgrade the contract to a new WASM binary.
-    /// 
+    ///
     /// This function requires multisig authorization from protocol admins and allows for
     /// upgrading the contract code while preserving all contract state.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `new_wasm_hash` - The 32-byte hash of the new WASM binary
-    /// 
+    ///
     /// # Panics
     /// * If insufficient multisig signatures are provided
     /// * If the WASM hash is invalid
     pub fn upgrade(env: Env, signers: Vec<Address>, new_wasm_hash: BytesN<32>) {
         // Verify multisig authorization
         Self::verify_multisig_auth(&env, &signers);
-        
+
         // Perform the upgrade
-        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
-        
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+
         // Emit upgrade event
         env.events().publish(
-            (Symbol::new(&env, "VeryPrince"), Symbol::new(&env, "ContractUpgraded")),
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "ContractUpgraded"),
+            ),
             (new_wasm_hash, env.ledger().timestamp()),
         );
     }
