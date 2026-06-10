@@ -4,6 +4,35 @@ test.describe('General UI and Navigation', () => {
   test.beforeEach(async ({ page }) => {
     // Mock Freighter wallet environment to avoid real extension dependency
     await page.addInitScript(() => {
+      // Mock Freighter API's postMessage communication
+      window.addEventListener("message", (event) => {
+        if (event.data && event.data.source === "FREIGHTER_EXTERNAL_MSG_REQUEST") {
+          const response = {
+            source: "FREIGHTER_EXTERNAL_MSG_RESPONSE",
+            messagedId: event.data.messageId,
+          };
+          if (event.data.type === "REQUEST_CONNECTION_STATUS") {
+            (response as any).isConnected = true;
+          } else if (event.data.type === "REQUEST_ALLOWED_STATUS") {
+            (response as any).isAllowed = true;
+          } else if (event.data.type === "REQUEST_PUBLIC_KEY" || event.data.type === "REQUEST_ACCESS") {
+            (response as any).publicKey = "GABC1234567890WXYZ";
+          } else if (event.data.type === "REQUEST_NETWORK") {
+            (response as any).network = "TESTNET";
+          } else if (event.data.type === "REQUEST_NETWORK_DETAILS") {
+            (response as any).networkDetails = {
+              network: "TESTNET",
+              networkName: "Test Network",
+              networkUrl: "https://horizon-testnet.stellar.org",
+              networkPassphrase: "Test SDF Network ; September 2015",
+            };
+          } else if (event.data.type === "SET_ALLOWED_STATUS") {
+            (response as any).isAllowed = true;
+          }
+          window.postMessage(response, window.location.origin);
+        }
+      });
+
       // Mock @stellar/freighter-api
       (window as any).freighter = {
         isConnected: () => Promise.resolve(true),
