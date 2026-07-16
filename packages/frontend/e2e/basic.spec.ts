@@ -110,4 +110,29 @@ test.describe('General UI and Navigation', () => {
     await expect(page.getByText('There are currently no maintainers registered for the organization')).toBeVisible();
     await expect(page.getByText('Allocate First Payout')).toBeVisible();
   });
+
+  test('secondary text on Glassmorphism elements has improved contrast/opacity overrides', async ({ page }) => {
+    await page.goto('/');
+
+    const styles = await page.evaluate(() => {
+      const styleSheets = Array.from(document.styleSheets);
+      let foundOverride = false;
+      for (const sheet of styleSheets) {
+        try {
+          const rules = Array.from(sheet.cssRules);
+          for (const rule of rules) {
+            if (rule.cssText.includes('.glass-card .text-white') || rule.cssText.includes('.glass-panel .text-white')) {
+              foundOverride = true;
+            }
+          }
+        } catch (e) {
+          // Cross-origin stylesheet access might fail, ignore
+        }
+      }
+      return { foundOverride };
+    });
+
+    expect(styles.foundOverride).toBe(true);
+  });
 });
+
