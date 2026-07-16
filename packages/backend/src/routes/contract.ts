@@ -88,7 +88,10 @@ const VerifyAuthBody = z.object({
 // ─── Route Plugin ────────────────────────────────────────────────────────────
 
 // Export mock cache for nonce verification
-export const nonceCache = new Map<string, { nonce: string; expiresAt: number }>();
+export const nonceCache = new Map<
+  string,
+  { nonce: string; expiresAt: number }
+>();
 
 export const contractRoutes: FastifyPluginAsync = async (fastify) => {
   /**
@@ -98,7 +101,9 @@ export const contractRoutes: FastifyPluginAsync = async (fastify) => {
    * @example
    * GET /api/v1/contract/orgs?page=1&limit=10
    */
-  fastify.get<{ Querystring: { page?: string; limit?: string; search?: string } }>(
+  fastify.get<{
+    Querystring: { page?: string; limit?: string; search?: string };
+  }>(
     "/orgs",
     {
       schema: {
@@ -122,9 +127,13 @@ export const contractRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const { page, limit, search } = parsedQuery.data;
-      const result = await contractController.getOrganizations(page, limit, search);
+      const result = await contractController.getOrganizations(
+        page,
+        limit,
+        search,
+      );
       return reply.send(result);
-    }
+    },
   );
 
   /**
@@ -161,10 +170,10 @@ export const contractRoutes: FastifyPluginAsync = async (fastify) => {
         id,
         name,
         admin,
-        signerSecret
+        signerSecret,
       );
       return reply.status(201).send(result);
-    }
+    },
   );
 
   /**
@@ -203,17 +212,23 @@ export const contractRoutes: FastifyPluginAsync = async (fastify) => {
       const { orgId } = request.params;
       const org = await contractController.getOrganization(orgId);
       return reply.send(org);
-    }
+    },
   );
 
   /**
    * GET /orgs/:orgId/maintainers
-   * Returns the list of maintainer addresses registered under an organization.
+   * Returns the paginated list of maintainer addresses registered under an organization.
    *
+   * Query params
+   * - page (default 1)
+   * - limit (default 20)
    * @example
-   * GET /api/v1/contract/orgs/stellar/maintainers
+   * GET /api/v1/contract/orgs/stellar/maintainers?page=2&limit=10
    */
-  fastify.get<{ Params: { orgId: string } }>(
+  fastify.get<{
+    Params: { orgId: string };
+    Querystring: { page?: number; limit?: number };
+  }>(
     "/orgs/:orgId/maintainers",
     {
       schema: {
@@ -226,13 +241,25 @@ export const contractRoutes: FastifyPluginAsync = async (fastify) => {
           },
           required: ["orgId"],
         },
+        querystring: {
+          type: "object",
+          properties: {
+            page: { type: "integer", minimum: 1, default: 1 },
+            limit: { type: "integer", minimum: 1, default: 20 },
+          },
+        },
       },
     },
     async (request, reply) => {
       const { orgId } = request.params;
-      const result = await contractController.getMaintainers(orgId);
+      const { page = 1, limit = 20 } = request.query;
+      const result = await contractController.getMaintainers(
+        orgId,
+        page,
+        limit,
+      );
       return reply.send(result);
-    }
+    },
   );
 
   /**
@@ -261,22 +288,22 @@ export const contractRoutes: FastifyPluginAsync = async (fastify) => {
       const { orgId } = request.params;
       const result = await contractController.getOrgBudget(orgId);
       return reply.send(result);
-    }
+    },
   );
 
   /**
    * POST /orgs/:orgId/fund
    * Fund an organization's budget via SAC token transfer.
    */
-fastify.post<{ Params: { orgId: string } }>(
-  "/orgs/:orgId/fund",
-  {
-    config: {
-      rateLimit: {
-        max: 5,
-        timeWindow: "1 minute",
+  fastify.post<{ Params: { orgId: string } }>(
+    "/orgs/:orgId/fund",
+    {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: "1 minute",
+        },
       },
-    },
       schema: {
         // description: "Fund an organization's budget using public Stellar Asset transfers.",
         // tags: ["Organizations", "Funding"],
@@ -312,10 +339,10 @@ fastify.post<{ Params: { orgId: string } }>(
         orgId,
         fromAddress,
         amountStroops,
-        signerSecret
+        signerSecret,
       );
       return reply.status(201).send(result);
-    }
+    },
   );
 
   /**
@@ -334,7 +361,10 @@ fastify.post<{ Params: { orgId: string } }>(
         params: {
           type: "object",
           properties: {
-            address: { type: "string", description: "Stellar public key (G...)" },
+            address: {
+              type: "string",
+              description: "Stellar public key (G...)",
+            },
           },
           required: ["address"],
         },
@@ -344,7 +374,7 @@ fastify.post<{ Params: { orgId: string } }>(
       const { address } = request.params;
       const result = await contractController.getClaimableBalance(address);
       return reply.send(result);
-    }
+    },
   );
 
   /**
@@ -355,21 +385,26 @@ fastify.post<{ Params: { orgId: string } }>(
    * POST /api/v1/contract/payouts
    * Body: { orgId, maintainerAddress, amountStroops, signerSecret }
    */
-fastify.post(
-  "/payouts",
-  {
-    config: {
-      rateLimit: {
-        max: 5,
-        timeWindow: "1 minute",
+  fastify.post(
+    "/payouts",
+    {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: "1 minute",
+        },
       },
-    },
       schema: {
         // description: "Allocate a payout to a maintainer (org admin only).",
         // tags: ["Payouts"],
         body: {
           type: "object",
-          required: ["orgId", "maintainerAddress", "amountStroops", "signerSecret"],
+          required: [
+            "orgId",
+            "maintainerAddress",
+            "amountStroops",
+            "signerSecret",
+          ],
           properties: {
             orgId: { type: "string" },
             maintainerAddress: { type: "string" },
@@ -395,10 +430,10 @@ fastify.post(
         orgId,
         maintainerAddress,
         amountStroops,
-        signerSecret
+        signerSecret,
       );
       return reply.status(201).send(result);
-    }
+    },
   );
 
   /**
@@ -412,7 +447,10 @@ fastify.post(
         params: {
           type: "object",
           properties: {
-            address: { type: "string", description: "Stellar public key (G...)" },
+            address: {
+              type: "string",
+              description: "Stellar public key (G...)",
+            },
           },
           required: ["address"],
         },
@@ -422,7 +460,7 @@ fastify.post(
       const { address } = request.params;
       const payouts = await stellarService.getMaintainerPayouts(address);
       return reply.send(payouts);
-    }
+    },
   );
 
   /**
@@ -436,16 +474,19 @@ fastify.post(
         body: {
           type: "object",
           required: ["publicKey"],
-          properties: { publicKey: { type: "string" } }
-        }
-      }
+          properties: { publicKey: { type: "string" } },
+        },
+      },
     },
     async (request, reply) => {
       const { publicKey } = request.body as { publicKey: string };
       const nonce = Math.random().toString(36).substring(2);
-      nonceCache.set(publicKey, { nonce, expiresAt: Date.now() + 1000 * 60 * 5 });
+      nonceCache.set(publicKey, {
+        nonce,
+        expiresAt: Date.now() + 1000 * 60 * 5,
+      });
       return reply.send({ nonce });
-    }
+    },
   );
 
   /**
@@ -473,7 +514,10 @@ fastify.post(
       };
 
       try {
-        const transactionXdr = await contractController.createClaimTransaction(orgId, maintainerAddress);
+        const transactionXdr = await contractController.createClaimTransaction(
+          orgId,
+          maintainerAddress,
+        );
         return reply.send({ transactionXdr });
       } catch (error) {
         return reply.status(400).send({
@@ -481,7 +525,7 @@ fastify.post(
           message: error instanceof Error ? error.message : "Unknown error",
         });
       }
-    }
+    },
   );
 
   /**
@@ -507,7 +551,8 @@ fastify.post(
       };
 
       try {
-        const result = await contractController.submitTransaction(signedTransaction);
+        const result =
+          await contractController.submitTransaction(signedTransaction);
         return reply.send(result);
       } catch (error) {
         return reply.status(400).send({
@@ -515,7 +560,7 @@ fastify.post(
           message: error instanceof Error ? error.message : "Unknown error",
         });
       }
-    }
+    },
   );
 
   /**
@@ -550,19 +595,23 @@ fastify.post(
 
       const cached = nonceCache.get(publicKey);
       if (!cached) {
-        return reply.status(401).send({ error: "No pending authentication request found." });
+        return reply
+          .status(401)
+          .send({ error: "No pending authentication request found." });
       }
 
       if (Date.now() > cached.expiresAt) {
         nonceCache.delete(publicKey);
-        return reply.status(401).send({ error: "Authentication request expired." });
+        return reply
+          .status(401)
+          .send({ error: "Authentication request expired." });
       }
 
       try {
         const keypair = Keypair.fromPublicKey(publicKey);
         const isValid = keypair.verify(
           Buffer.from(originalMessage),
-          Buffer.from(signature, "base64")
+          Buffer.from(signature, "base64"),
         );
 
         if (!isValid) {
@@ -571,10 +620,15 @@ fastify.post(
 
         nonceCache.delete(publicKey);
 
-        return reply.send({ success: true, message: "Authentication verified." });
+        return reply.send({
+          success: true,
+          message: "Authentication verified.",
+        });
       } catch (err) {
-        return reply.status(401).send({ error: "Signature verification failed." });
+        return reply
+          .status(401)
+          .send({ error: "Signature verification failed." });
       }
-    }
+    },
   );
 };
