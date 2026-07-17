@@ -295,7 +295,65 @@ export const statsController = {
 
     return sorted;
   },
+
+  /**
+   * Get the historical funding events and cumulative funding over time for a specific organization.
+   *
+   * @param orgId - The ID/Symbol of the organization
+   */
+  async getOrgFundingHistory(orgId: string): Promise<FundingHistoryResponse[]> {
+    const cacheKey = `stats:funding-history:${orgId}`;
+    const cached = await safeGet(cacheKey);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+
+    const events = await prisma.fundingEvent.findMany({
+      where: {
+        orgId,
+      },
+      orderBy: {
+        createdAt: "asc",
+      },
+    });
+
+    let cumulativeStroops = 0n;
+
+    const history = events.map((event) => {
+      const amountStroops = BigInt(event.amountStroops);
+      cumulativeStroops += amountStroops;
+
+      return {
+        id: event.id,
+        orgId: event.orgId,
+        from: event.from,
+        amountStroops: amountStroops.toString(),
+        amountXlm: event.amountXlm.toString(),
+        cumulativeStroops: cumulativeStroops.toString(),
+        cumulativeXlm: stroopsToXlm(cumulativeStroops),
+        txHash: event.txHash,
+        createdAt: event.createdAt.toISOString(),
+      };
+    });
+
+    // Cache for 1 minute (60s)
+    await safeSet(cacheKey, JSON.stringify(history), 60);
+
+    return history;
+  },
 } as const;
+
+export interface FundingHistoryResponse {
+  id: string;
+  orgId: string;
+  from: string;
+  amountStroops: string;
+  amountXlm: string;
+  cumulativeStroops: string;
+  cumulativeXlm: string;
+  txHash: string;
+  createdAt: string;
+}
 
 export interface TVLResponse {
   /** Total Value Locked in USD. */
