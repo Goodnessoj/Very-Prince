@@ -112,7 +112,7 @@ DynamoDB locking is enforced on every run.
 
 ### ECS Service (`terraform/modules/ecs-service/`)
 - Task definition with `awslogs` log driver → CloudWatch Logs
-- Execution role: CloudWatch Logs write + ECR pull
+- Execution role: CloudWatch Logs write + ECR pull, scoped to this service's own log group and ECR repository (no wildcard resources except `ecr:GetAuthorizationToken`, which AWS requires as account-level/`*`)
 - Task role: Least-privilege application permissions
 - Network: Private subnets + security group
 - Optional ALB target group attachment
@@ -149,7 +149,7 @@ DynamoDB locking is enforced on every run.
 - **Purpose**: prune orphaned manual RDS DB snapshots and DB cluster snapshots that are older than the configured retention period to reduce storage costs.
 - **Trigger**: EventBridge rule (`very-prince-shared-prune-schedule`) on the `rds_snapshot_prune_schedule` expression (default `rate(1 day)`).
 - **Compute**: Python 3.11 Lambda (`very-prince-shared-prune-snapshots`) that paginates through `DescribeDBSnapshots` and `DescribeDBClusterSnapshots` with `SnapshotType = "manual"`, compares `SnapshotCreateTime` to the retention cutoff, and calls `DeleteDBSnapshot` / `DeleteDBClusterSnapshot`.
-- **IAM**: least-privilege inline policy (`rds:DescribeDBSnapshots`, `rds:DescribeDBClusterSnapshots`, `rds:DeleteDBSnapshot`, `rds:DeleteDBClusterSnapshot`) plus CloudWatch Logs permissions.
+- **IAM**: least-privilege inline policy only (no AWS-managed policy attachments). `rds:DescribeDBSnapshots`/`rds:DescribeDBClusterSnapshots` use `Resource: "*"` because RDS does not support resource-level permissions for Describe actions; `rds:DeleteDBSnapshot`/`rds:DeleteDBClusterSnapshot` are scoped to this account/region's `snapshot:*` and `cluster-snapshot:*` ARNs respectively, and CloudWatch Logs permissions are scoped to this function's own `/aws/lambda/...` log group.
 - **Configuration as code**:
   - `rds_snapshot_retention_days` (default `7`) — days to keep manual snapshots
   - `rds_backup_window` (default `03:00-04:00`) — preferred UTC backup window captured as code

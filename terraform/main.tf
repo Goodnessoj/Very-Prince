@@ -165,6 +165,7 @@ module "ecs_service" {
   cluster_id         = module.ecs_cluster.cluster_id
   cluster_name       = module.ecs_cluster.cluster_name
   log_group_name     = module.cloudwatch_logs.log_group_name
+  log_group_arn      = module.cloudwatch_logs.log_group_arn
   image_uri          = var.image_uri
   task_cpu           = var.task_cpu
   task_memory        = var.task_memory
