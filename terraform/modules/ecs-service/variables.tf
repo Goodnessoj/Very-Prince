@@ -18,6 +18,11 @@ variable "log_group_name" {
   type        = string
 }
 
+variable "log_group_arn" {
+  description = "CloudWatch log group ARN, used to scope the execution role's logging permissions"
+  type        = string
+}
+
 variable "image_uri" {
   description = "Docker image URI"
   type        = string
@@ -71,6 +76,42 @@ variable "container_port" {
 variable "aws_region" {
   description = "AWS region"
   type        = string
+}
+
+variable "webhook_queue_arn" {
+  description = "ARN of the SQS queue used for webhook dispatches."
+  type        = string
+  default     = ""
+}
+
+variable "webhook_queue_url" {
+  description = "URL of the SQS queue used for webhook dispatches."
+  type        = string
+  default     = ""
+}
+
+variable "webhook_dlq_arn" {
+  description = "ARN of the SQS dead-letter queue for failed webhook dispatches."
+  type        = string
+  default     = ""
+}
+
+variable "webhook_dlq_url" {
+  description = "URL of the SQS dead-letter queue for failed webhook dispatches."
+  type        = string
+  default     = ""
+}
+
+variable "webhook_queue_max_receive_count" {
+  description = "Number of failed SQS receives before a webhook message is considered exhausted."
+  type        = number
+  default     = 5
+}
+
+variable "webhook_queue_visibility_timeout_seconds" {
+  description = "Visibility timeout used by the SQS webhook worker."
+  type        = number
+  default     = 30
 }
 
 variable "tags" {
