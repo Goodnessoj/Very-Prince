@@ -50,6 +50,25 @@ pub struct MaintainerPayout {
     pub tranches: Vec<VestingTranche>,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QfProjectStats {
+    pub direct_contributions: i128,
+    pub sqrt_sum: i128,
+    pub contributor_count: u32,
+    pub weight: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QfAllocation {
+    pub project_id: Symbol,
+    pub matching_amount: i128,
+    pub direct_contributions: i128,
+    pub contributor_count: u32,
+    pub weight: i128,
+}
+
 /// Single-tranche legacy shape used for backward compatibility.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -141,6 +160,14 @@ pub enum PrinceError {
     /// global mutex on entry; this is raised if the contract is re-entered
     /// before the original call returns (e.g. via a malicious token transfer).
     Reentrancy = 28,
+    /// A contributor must hold an active proof-of-humanity verification.
+    HumanityVerificationRequired = 29,
+    /// Integer math overflowed while evaluating the quadratic funding formula.
+    QuadraticOverflow = 30,
+    /// The quadratic matching pool is empty.
+    EmptyMatchingPool = 31,
+    /// The quadratic round has no positive project weight.
+    EmptyQuadraticRound = 32,
 }
 
 #[contracttype]
@@ -163,6 +190,14 @@ pub enum DataKey {
     /// Reentrancy mutex flag (stored in instance storage). Set while a
     /// state-mutating function is executing to reject re-entrant calls.
     ReentrancyLock,
+    /// Protocol-admin issued proof-of-humanity verification for one address.
+    HumanityVerification(Address),
+    /// Tokens reserved for quadratic matching distribution.
+    QfMatchingPool,
+    /// Cumulative QF stats for a project/organization.
+    QfProjectStats(Symbol),
+    /// Cumulative verified contribution from one human to one project.
+    QfContribution(Symbol, Address),
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
