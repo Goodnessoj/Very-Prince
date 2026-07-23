@@ -470,6 +470,77 @@ impl PayoutRegistry {
             .unwrap_or_else(|| panic_with_error!(env, PrinceError::EmptyAdminList))
     }
 
+    fn empty_qf_stats() -> QfProjectStats {
+        QfProjectStats {
+            direct_contributions: 0,
+            sqrt_sum: 0,
+            contributor_count: 0,
+            weight: 0,
+        }
+    }
+
+    /// Compute floor(sqrt(value)) with integer arithmetic only.
+    pub fn isqrt(env: Env, value: i128) -> i128 {
+        checked_isqrt_i128(&env, value)
+    }
+
+    /// Issue a non-transferable proof-of-humanity verification token.
+    pub fn verify_humanity(env: Env, admin: Address, human: Address) {
+        let _guard = ReentrancyGuard::acquire(&env);
+        if admin != Self::get_protocol_admin(&env) {
+            panic_with_error!(&env, PrinceError::NotAuthorized);
+        }
+        admin.require_auth_for_args((human.clone(),).into_val(&env));
+
+        let key = DataKey::HumanityVerification(human.clone());
+        env.storage().persistent().set(&key, &true);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "HumanityVerified"),
+            ),
+            human,
+        );
+    }
+
+    /// Revoke a proof-of-humanity verification token.
+    pub fn revoke_humanity(env: Env, admin: Address, human: Address) {
+        let _guard = ReentrancyGuard::acquire(&env);
+        if admin != Self::get_protocol_admin(&env) {
+            panic_with_error!(&env, PrinceError::NotAuthorized);
+        }
+        admin.require_auth_for_args((human.clone(),).into_val(&env));
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::HumanityVerification(human.clone()));
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "HumanityRevoked"),
+            ),
+            human,
+        );
+    }
+
+    /// Return whether an address holds an active proof-of-humanity token.
+    pub fn has_humanity(env: Env, human: Address) -> bool {
+        let key = DataKey::HumanityVerification(human);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+        env.storage().persistent().get(&key).unwrap_or(false)
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Organisation Management & Funding
     // ─────────────────────────────────────────────────────────────────────────
