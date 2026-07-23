@@ -50,14 +50,39 @@ pub struct MaintainerPayout {
     pub tranches: Vec<VestingTranche>,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QfProjectStats {
+    pub direct_contributions: i128,
+    pub matching_allocated: i128,
+    pub sqrt_sum: i128,
+    pub contributor_count: u32,
+    pub weight: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QfAllocation {
+    pub project_id: Symbol,
+    pub matching_amount: i128,
+    pub direct_contributions: i128,
+    pub contributor_count: u32,
+    pub weight: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HumanityProof {
+    pub verified_by: Address,
+    pub verified_at: u64,
+}
+
 /// Single-tranche legacy shape used for backward compatibility.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LegacyUnlock {
     pub unlock_timestamp: u64,
 }
-
-
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -141,6 +166,16 @@ pub enum PrinceError {
     /// global mutex on entry; this is raised if the contract is re-entered
     /// before the original call returns (e.g. via a malicious token transfer).
     Reentrancy = 28,
+    /// A contributor must hold an active proof-of-humanity verification.
+    HumanityVerificationRequired = 29,
+    /// Integer math overflowed while evaluating the quadratic funding formula.
+    QuadraticOverflow = 30,
+    /// The quadratic matching pool is empty.
+    EmptyMatchingPool = 31,
+    /// The quadratic round has no positive project weight.
+    EmptyQuadraticRound = 32,
+    /// A project list cannot contain the same project more than once.
+    DuplicateProject = 33,
 }
 
 #[contracttype]
@@ -163,6 +198,14 @@ pub enum DataKey {
     /// Reentrancy mutex flag (stored in instance storage). Set while a
     /// state-mutating function is executing to reject re-entrant calls.
     ReentrancyLock,
+    /// Protocol-admin issued proof-of-humanity verification for one address.
+    HumanityVerification(Address),
+    /// Tokens reserved for quadratic matching distribution.
+    QfMatchingPool,
+    /// Cumulative QF stats for a project/organization.
+    QfProjectStats(Symbol),
+    /// Cumulative verified contribution from one human to one project.
+    QfContribution(Symbol, Address),
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -182,6 +225,46 @@ const PERSISTENT_BUMP_AMOUNT: u32 = 518_400;
 const PERSISTENT_LIFETIME_THRESHOLD: u32 = 120_960;
 /// Maximum allowed amount for funding or payout (1 trillion tokens in stroops).
 const MAX_AMOUNT_LIMIT: i128 = 10_000_000_000_000_000_000;
+
+fn isqrt_u128(n: u128) -> u128 {
+    let mut op = n;
+    let mut res = 0_u128;
+    let mut one = 1_u128 << 126;
+
+    while one > op {
+        one >>= 2;
+    }
+
+    while one != 0 {
+        if op >= res + one {
+            op -= res + one;
+            res = (res >> 1) + one;
+        } else {
+            res >>= 1;
+        }
+        one >>= 2;
+    }
+
+    res
+}
+
+fn checked_isqrt_i128(env: &Env, value: i128) -> i128 {
+    if value < 0 {
+        panic_with_error!(env, PrinceError::InvalidAmount);
+    }
+
+    let root = isqrt_u128(value as u128);
+    if root > i128::MAX as u128 {
+        panic_with_error!(env, PrinceError::QuadraticOverflow);
+    }
+    root as i128
+}
+
+fn checked_square_i128(env: &Env, value: i128) -> i128 {
+    value
+        .checked_mul(value)
+        .unwrap_or_else(|| panic_with_error!(env, PrinceError::QuadraticOverflow))
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reentrancy Guard
@@ -395,9 +478,432 @@ impl PayoutRegistry {
             .unwrap_or_else(|| panic_with_error!(env, PrinceError::EmptyAdminList))
     }
 
+    fn empty_qf_stats() -> QfProjectStats {
+        QfProjectStats {
+            direct_contributions: 0,
+            matching_allocated: 0,
+            sqrt_sum: 0,
+            contributor_count: 0,
+            weight: 0,
+        }
+    }
+
+    fn assert_unique_projects(env: &Env, projects: &Vec<Symbol>) {
+        if projects.len() > 100 {
+            panic_with_error!(env, PrinceError::BatchSizeExceeded);
+        }
+
+        for i in 0..projects.len() {
+            let left = projects.get(i).unwrap();
+            for j in (i + 1)..projects.len() {
+                if left == projects.get(j).unwrap() {
+                    panic_with_error!(env, PrinceError::DuplicateProject);
+                }
+            }
+        }
+    }
+
+    /// Compute floor(sqrt(value)) with integer arithmetic only.
+    pub fn isqrt(env: Env, value: i128) -> i128 {
+        checked_isqrt_i128(&env, value)
+    }
+
+    /// Issue a non-transferable proof-of-humanity verification token.
+    pub fn verify_humanity(env: Env, admin: Address, human: Address) {
+        let _guard = ReentrancyGuard::acquire(&env);
+        if admin != Self::get_protocol_admin(&env) {
+            panic_with_error!(&env, PrinceError::NotAuthorized);
+        }
+        admin.require_auth_for_args((human.clone(),).into_val(&env));
+
+        let proof = HumanityProof {
+            verified_by: admin.clone(),
+            verified_at: env.ledger().timestamp(),
+        };
+        let key = DataKey::HumanityVerification(human.clone());
+        env.storage().persistent().set(&key, &proof);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "HumanityVerified"),
+            ),
+            (human, proof.verified_at),
+        );
+    }
+
+    /// Revoke a proof-of-humanity verification token.
+    pub fn revoke_humanity(env: Env, admin: Address, human: Address) {
+        let _guard = ReentrancyGuard::acquire(&env);
+        if admin != Self::get_protocol_admin(&env) {
+            panic_with_error!(&env, PrinceError::NotAuthorized);
+        }
+        admin.require_auth_for_args((human.clone(),).into_val(&env));
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::HumanityVerification(human.clone()));
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "HumanityRevoked"),
+            ),
+            human,
+        );
+    }
+
+    /// Return whether an address holds an active proof-of-humanity token.
+    pub fn has_humanity(env: Env, human: Address) -> bool {
+        let key = DataKey::HumanityVerification(human);
+        if !env.storage().persistent().has(&key) {
+            return false;
+        }
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+        env.storage()
+            .persistent()
+            .get::<DataKey, HumanityProof>(&key)
+            .is_some()
+    }
+
+    /// Return the stored proof-of-humanity record, if present.
+    pub fn get_humanity_proof(env: Env, human: Address) -> Option<HumanityProof> {
+        let key = DataKey::HumanityVerification(human);
+        if !env.storage().persistent().has(&key) {
+            return None;
+        }
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+        env.storage().persistent().get(&key)
+    }
+
+    /// Deposit tokens into the quadratic matching pool held by this contract.
+    pub fn qf_deposit_matching_pool(env: Env, from: Address, amount: i128) {
+        let _guard = ReentrancyGuard::acquire(&env);
+        Self::assert_active(&env);
+        from.require_auth_for_args((from.clone(), amount).into_val(&env));
+
+        if amount <= 0 {
+            panic_with_error!(&env, PrinceError::InvalidAmount);
+        }
+        if amount > MAX_AMOUNT_LIMIT {
+            panic_with_error!(&env, PrinceError::AmountExceedsLimit);
+        }
+
+        let current_pool: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::QfMatchingPool)
+            .unwrap_or(0);
+        let new_pool = current_pool
+            .checked_add(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, PrinceError::BudgetOverflow));
+        env.storage()
+            .persistent()
+            .set(&DataKey::QfMatchingPool, &new_pool);
+        env.storage().persistent().extend_ttl(
+            &DataKey::QfMatchingPool,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+
+        let token = Self::get_token(env.clone());
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(&from, &env.current_contract_address(), &amount);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "QfPoolFunded"),
+            ),
+            (from, amount, new_pool),
+        );
+    }
+
+    /// Contribute directly to a project and update its quadratic funding weight.
+    pub fn qf_contribute(env: Env, project_id: Symbol, contributor: Address, amount: i128) {
+        let _guard = ReentrancyGuard::acquire(&env);
+        Self::assert_active(&env);
+        contributor.require_auth_for_args(
+            (project_id.clone(), contributor.clone(), amount).into_val(&env),
+        );
+
+        if amount <= 0 {
+            panic_with_error!(&env, PrinceError::InvalidAmount);
+        }
+        if amount > MAX_AMOUNT_LIMIT {
+            panic_with_error!(&env, PrinceError::AmountExceedsLimit);
+        }
+        if !Self::has_humanity(env.clone(), contributor.clone()) {
+            panic_with_error!(&env, PrinceError::HumanityVerificationRequired);
+        }
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Organization(project_id.clone()))
+        {
+            panic_with_error!(&env, PrinceError::OrgNotFound);
+        }
+
+        let contribution_key = DataKey::QfContribution(project_id.clone(), contributor.clone());
+        let previous_contribution: i128 = env
+            .storage()
+            .persistent()
+            .get(&contribution_key)
+            .unwrap_or(0);
+        let new_contribution = previous_contribution
+            .checked_add(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, PrinceError::BudgetOverflow));
+        env.storage()
+            .persistent()
+            .set(&contribution_key, &new_contribution);
+        env.storage().persistent().extend_ttl(
+            &contribution_key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+
+        let previous_root = checked_isqrt_i128(&env, previous_contribution);
+        let new_root = checked_isqrt_i128(&env, new_contribution);
+        let root_delta = new_root
+            .checked_sub(previous_root)
+            .unwrap_or_else(|| panic_with_error!(&env, PrinceError::QuadraticOverflow));
+
+        let stats_key = DataKey::QfProjectStats(project_id.clone());
+        let mut stats: QfProjectStats = env
+            .storage()
+            .persistent()
+            .get(&stats_key)
+            .unwrap_or_else(Self::empty_qf_stats);
+        stats.direct_contributions = stats
+            .direct_contributions
+            .checked_add(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, PrinceError::BudgetOverflow));
+        stats.sqrt_sum = stats
+            .sqrt_sum
+            .checked_add(root_delta)
+            .unwrap_or_else(|| panic_with_error!(&env, PrinceError::QuadraticOverflow));
+        if previous_contribution == 0 {
+            stats.contributor_count = stats
+                .contributor_count
+                .checked_add(1)
+                .unwrap_or_else(|| panic_with_error!(&env, PrinceError::QuadraticOverflow));
+        }
+        stats.weight = checked_square_i128(&env, stats.sqrt_sum);
+        env.storage().persistent().set(&stats_key, &stats);
+        env.storage().persistent().extend_ttl(
+            &stats_key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+
+        let budget_key = DataKey::OrgBudget(project_id.clone());
+        let current_budget: i128 = env.storage().persistent().get(&budget_key).unwrap_or(0);
+        let new_budget = current_budget
+            .checked_add(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, PrinceError::BudgetOverflow));
+        env.storage().persistent().set(&budget_key, &new_budget);
+        env.storage().persistent().extend_ttl(
+            &budget_key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+
+        let token = Self::get_token(env.clone());
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(&contributor, &env.current_contract_address(), &amount);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "QfContributed"),
+            ),
+            (project_id, contributor, amount, stats.weight),
+        );
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
+    // Quadratic Funding Views & Distribution
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Return the current undistributed QF matching pool.
+    pub fn get_qf_matching_pool(env: Env) -> i128 {
+        if !env.storage().persistent().has(&DataKey::QfMatchingPool) {
+            return 0;
+        }
+        env.storage().persistent().extend_ttl(
+            &DataKey::QfMatchingPool,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+        env.storage()
+            .persistent()
+            .get(&DataKey::QfMatchingPool)
+            .unwrap_or(0)
+    }
+
+    /// Return cumulative QF stats for a project.
+    pub fn get_qf_project_stats(env: Env, project_id: Symbol) -> QfProjectStats {
+        let key = DataKey::QfProjectStats(project_id);
+        if !env.storage().persistent().has(&key) {
+            return Self::empty_qf_stats();
+        }
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+        env.storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(Self::empty_qf_stats)
+    }
+
+    /// Return one human contributor's cumulative amount for a project.
+    pub fn get_qf_contribution(env: Env, project_id: Symbol, contributor: Address) -> i128 {
+        let key = DataKey::QfContribution(project_id, contributor);
+        if !env.storage().persistent().has(&key) {
+            return 0;
+        }
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+        env.storage().persistent().get(&key).unwrap_or(0)
+    }
+
+    /// Preview QF matching amounts for a set of projects.
+    pub fn qf_preview_distribution(env: Env, projects: Vec<Symbol>) -> Vec<QfAllocation> {
+        if projects.is_empty() {
+            panic_with_error!(&env, PrinceError::EmptyBatch);
+        }
+        Self::assert_unique_projects(&env, &projects);
+
+        let pool = Self::get_qf_matching_pool(env.clone());
+        if pool <= 0 {
+            panic_with_error!(&env, PrinceError::EmptyMatchingPool);
+        }
+
+        let mut total_weight: i128 = 0;
+        for i in 0..projects.len() {
+            let project_id = projects.get(i).unwrap();
+            let stats = Self::get_qf_project_stats(env.clone(), project_id);
+            total_weight = total_weight
+                .checked_add(stats.weight)
+                .unwrap_or_else(|| panic_with_error!(&env, PrinceError::QuadraticOverflow));
+        }
+
+        if total_weight <= 0 {
+            panic_with_error!(&env, PrinceError::EmptyQuadraticRound);
+        }
+
+        let mut allocations = Vec::new(&env);
+        for i in 0..projects.len() {
+            let project_id = projects.get(i).unwrap();
+            let stats = Self::get_qf_project_stats(env.clone(), project_id.clone());
+            let matching_amount = pool
+                .checked_mul(stats.weight)
+                .unwrap_or_else(|| panic_with_error!(&env, PrinceError::QuadraticOverflow))
+                / total_weight;
+            allocations.push_back(QfAllocation {
+                project_id,
+                matching_amount,
+                direct_contributions: stats.direct_contributions,
+                contributor_count: stats.contributor_count,
+                weight: stats.weight,
+            });
+        }
+
+        allocations
+    }
+
+    /// Distribute the matching pool into project budgets using QF weights.
+    pub fn qf_distribute(env: Env, admin: Address, projects: Vec<Symbol>) -> Vec<QfAllocation> {
+        let _guard = ReentrancyGuard::acquire(&env);
+        Self::assert_active(&env);
+        if admin != Self::get_protocol_admin(&env) {
+            panic_with_error!(&env, PrinceError::NotAuthorized);
+        }
+        admin.require_auth_for_args((admin.clone(), projects.clone()).into_val(&env));
+
+        let allocations = Self::qf_preview_distribution(env.clone(), projects);
+        let mut distributed_total: i128 = 0;
+
+        for i in 0..allocations.len() {
+            let allocation = allocations.get(i).unwrap();
+            if allocation.matching_amount > 0 {
+                let stats_key = DataKey::QfProjectStats(allocation.project_id.clone());
+                let mut stats: QfProjectStats = env
+                    .storage()
+                    .persistent()
+                    .get(&stats_key)
+                    .unwrap_or_else(Self::empty_qf_stats);
+                stats.matching_allocated = stats
+                    .matching_allocated
+                    .checked_add(allocation.matching_amount)
+                    .unwrap_or_else(|| panic_with_error!(&env, PrinceError::BudgetOverflow));
+                env.storage().persistent().set(&stats_key, &stats);
+                env.storage().persistent().extend_ttl(
+                    &stats_key,
+                    PERSISTENT_LIFETIME_THRESHOLD,
+                    PERSISTENT_BUMP_AMOUNT,
+                );
+
+                let budget_key = DataKey::OrgBudget(allocation.project_id.clone());
+                let current_budget: i128 = env.storage().persistent().get(&budget_key).unwrap_or(0);
+                let new_budget = current_budget
+                    .checked_add(allocation.matching_amount)
+                    .unwrap_or_else(|| panic_with_error!(&env, PrinceError::BudgetOverflow));
+                env.storage().persistent().set(&budget_key, &new_budget);
+                env.storage().persistent().extend_ttl(
+                    &budget_key,
+                    PERSISTENT_LIFETIME_THRESHOLD,
+                    PERSISTENT_BUMP_AMOUNT,
+                );
+            }
+            distributed_total = distributed_total
+                .checked_add(allocation.matching_amount)
+                .unwrap_or_else(|| panic_with_error!(&env, PrinceError::QuadraticOverflow));
+        }
+
+        let current_pool = Self::get_qf_matching_pool(env.clone());
+        env.storage().persistent().set(
+            &DataKey::QfMatchingPool,
+            &(current_pool - distributed_total),
+        );
+        env.storage().persistent().extend_ttl(
+            &DataKey::QfMatchingPool,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "QfDistributed"),
+            ),
+            distributed_total,
+        );
+
+        allocations
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Organisation Management & Funding
-    // ─────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Registers a new organization with a unique ID, human-readable name, and initial administrator address.
     ///
@@ -862,7 +1368,7 @@ impl PayoutRegistry {
     /// * `MaintainerOrgMismatch` - If the maintainer belongs to a different organization.
     /// * `InsufficientBudget` - If the organization does not have enough remaining budget.
     /// * `PayoutOverflow` - If the payout addition would overflow the maintainer's balance.
-pub fn allocate_payout(
+    pub fn allocate_payout(
         env: Env,
         org_id: Symbol,
         admin: Address,
@@ -1184,11 +1690,15 @@ pub fn allocate_payout(
         maintainer.require_auth_for_args((maintainer.clone(),).into_val(&env));
 
         let balance_key = DataKey::MaintainerBalance(maintainer.clone());
-        let mut payout: MaintainerPayout = env.storage().persistent().get(&balance_key).unwrap_or(MaintainerPayout {
-            amount: 0,
-            claimed_amount: 0,
-            tranches: Vec::new(&env),
-        });
+        let mut payout: MaintainerPayout =
+            env.storage()
+                .persistent()
+                .get(&balance_key)
+                .unwrap_or(MaintainerPayout {
+                    amount: 0,
+                    claimed_amount: 0,
+                    tranches: Vec::new(&env),
+                });
 
         if payout.amount == 0 {
             panic_with_error!(&env, PrinceError::NoClaimableBalance);
@@ -1222,7 +1732,6 @@ pub fn allocate_payout(
             PERSISTENT_LIFETIME_THRESHOLD,
             PERSISTENT_BUMP_AMOUNT,
         );
-
 
         // Interactions: Execute the token transfer as the absolute last step
         // This follows the Check-Effects-Interactions pattern.
@@ -1324,8 +1833,7 @@ pub fn allocate_payout(
     /// * If native protocol admin authorization is missing.
     pub fn propose_admin(env: Env, new_admin: Address) {
         let _guard = ReentrancyGuard::acquire(&env);
-        Self::get_protocol_admin(&env)
-            .require_auth_for_args((new_admin.clone(),).into_val(&env));
+        Self::get_protocol_admin(&env).require_auth_for_args((new_admin.clone(),).into_val(&env));
         env.storage()
             .persistent()
             .set(&DataKey::PendingAdmin, &new_admin);
