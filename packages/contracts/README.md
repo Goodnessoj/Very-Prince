@@ -18,7 +18,7 @@ The contract exposes a quadratic funding flow that stays fully deterministic on-
 - `qf_deposit_matching_pool` transfers tokens into the shared matching pool.
 - `qf_contribute` accepts verified-human project contributions, stores each human's cumulative contribution, and updates project `sqrt_sum` incrementally.
 - `qf_preview_distribution` computes `pool * project_weight / total_weight`, where `project_weight = sum(isqrt(cumulative_human_contribution))^2`.
-- `qf_distribute` moves the computed matching amounts into existing organization budgets so normal payout allocation can continue.
+- `qf_distribute` moves the computed matching amounts into existing organization budgets, while storing each project's cumulative `matching_allocated` total.
 
 All quadratic calculations use integer arithmetic. The exported `isqrt` method mirrors Python's `math.isqrt` semantics and avoids floating-point operations in WASM.
 

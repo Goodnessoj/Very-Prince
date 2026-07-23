@@ -194,6 +194,8 @@ mod tests {
         assert_eq!(allocations.get(1).unwrap().matching_amount, 500);
         assert_eq!(client.get_org_budget(&org_a), 700);
         assert_eq!(client.get_org_budget(&org_b), 900);
+        assert_eq!(client.get_qf_project_stats(&org_a).matching_allocated, 500);
+        assert_eq!(client.get_qf_project_stats(&org_b).matching_allocated, 500);
         assert_eq!(client.get_qf_matching_pool(), 0);
     }
 

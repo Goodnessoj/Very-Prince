@@ -54,6 +54,7 @@ pub struct MaintainerPayout {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QfProjectStats {
     pub direct_contributions: i128,
+    pub matching_allocated: i128,
     pub sqrt_sum: i128,
     pub contributor_count: u32,
     pub weight: i128,
@@ -480,6 +481,7 @@ impl PayoutRegistry {
     fn empty_qf_stats() -> QfProjectStats {
         QfProjectStats {
             direct_contributions: 0,
+            matching_allocated: 0,
             sqrt_sum: 0,
             contributor_count: 0,
             weight: 0,
@@ -828,6 +830,23 @@ impl PayoutRegistry {
         for i in 0..allocations.len() {
             let allocation = allocations.get(i).unwrap();
             if allocation.matching_amount > 0 {
+                let stats_key = DataKey::QfProjectStats(allocation.project_id.clone());
+                let mut stats: QfProjectStats = env
+                    .storage()
+                    .persistent()
+                    .get(&stats_key)
+                    .unwrap_or_else(Self::empty_qf_stats);
+                stats.matching_allocated = stats
+                    .matching_allocated
+                    .checked_add(allocation.matching_amount)
+                    .unwrap_or_else(|| panic_with_error!(&env, PrinceError::BudgetOverflow));
+                env.storage().persistent().set(&stats_key, &stats);
+                env.storage().persistent().extend_ttl(
+                    &stats_key,
+                    PERSISTENT_LIFETIME_THRESHOLD,
+                    PERSISTENT_BUMP_AMOUNT,
+                );
+
                 let budget_key = DataKey::OrgBudget(allocation.project_id.clone());
                 let current_budget: i128 = env.storage().persistent().get(&budget_key).unwrap_or(0);
                 let new_budget = current_budget
