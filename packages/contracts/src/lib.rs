@@ -678,6 +678,142 @@ impl PayoutRegistry {
     // Organisation Management & Funding
     // ─────────────────────────────────────────────────────────────────────────
 
+    /// Return the current undistributed QF matching pool.
+    pub fn get_qf_matching_pool(env: Env) -> i128 {
+        env.storage().persistent().extend_ttl(
+            &DataKey::QfMatchingPool,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+        env.storage()
+            .persistent()
+            .get(&DataKey::QfMatchingPool)
+            .unwrap_or(0)
+    }
+
+    /// Return cumulative QF stats for a project.
+    pub fn get_qf_project_stats(env: Env, project_id: Symbol) -> QfProjectStats {
+        let key = DataKey::QfProjectStats(project_id);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+        env.storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(Self::empty_qf_stats)
+    }
+
+    /// Return one human contributor's cumulative amount for a project.
+    pub fn get_qf_contribution(env: Env, project_id: Symbol, contributor: Address) -> i128 {
+        let key = DataKey::QfContribution(project_id, contributor);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+        env.storage().persistent().get(&key).unwrap_or(0)
+    }
+
+    /// Preview QF matching amounts for a set of projects.
+    pub fn qf_preview_distribution(env: Env, projects: Vec<Symbol>) -> Vec<QfAllocation> {
+        if projects.is_empty() {
+            panic_with_error!(&env, PrinceError::EmptyBatch);
+        }
+
+        let pool = Self::get_qf_matching_pool(env.clone());
+        if pool <= 0 {
+            panic_with_error!(&env, PrinceError::EmptyMatchingPool);
+        }
+
+        let mut total_weight: i128 = 0;
+        for i in 0..projects.len() {
+            let project_id = projects.get(i).unwrap();
+            let stats = Self::get_qf_project_stats(env.clone(), project_id);
+            total_weight = total_weight
+                .checked_add(stats.weight)
+                .unwrap_or_else(|| panic_with_error!(&env, PrinceError::QuadraticOverflow));
+        }
+
+        if total_weight <= 0 {
+            panic_with_error!(&env, PrinceError::EmptyQuadraticRound);
+        }
+
+        let mut allocations = Vec::new(&env);
+        for i in 0..projects.len() {
+            let project_id = projects.get(i).unwrap();
+            let stats = Self::get_qf_project_stats(env.clone(), project_id.clone());
+            let matching_amount = pool
+                .checked_mul(stats.weight)
+                .unwrap_or_else(|| panic_with_error!(&env, PrinceError::QuadraticOverflow))
+                / total_weight;
+            allocations.push_back(QfAllocation {
+                project_id,
+                matching_amount,
+                direct_contributions: stats.direct_contributions,
+                contributor_count: stats.contributor_count,
+                weight: stats.weight,
+            });
+        }
+
+        allocations
+    }
+
+    /// Distribute the matching pool into project budgets using QF weights.
+    pub fn qf_distribute(env: Env, admin: Address, projects: Vec<Symbol>) -> Vec<QfAllocation> {
+        let _guard = ReentrancyGuard::acquire(&env);
+        Self::assert_active(&env);
+        if admin != Self::get_protocol_admin(&env) {
+            panic_with_error!(&env, PrinceError::NotAuthorized);
+        }
+        admin.require_auth_for_args((admin.clone(), projects.clone()).into_val(&env));
+
+        let allocations = Self::qf_preview_distribution(env.clone(), projects);
+        let mut distributed_total: i128 = 0;
+
+        for i in 0..allocations.len() {
+            let allocation = allocations.get(i).unwrap();
+            if allocation.matching_amount > 0 {
+                let budget_key = DataKey::OrgBudget(allocation.project_id.clone());
+                let current_budget: i128 =
+                    env.storage().persistent().get(&budget_key).unwrap_or(0);
+                let new_budget = current_budget
+                    .checked_add(allocation.matching_amount)
+                    .unwrap_or_else(|| panic_with_error!(&env, PrinceError::BudgetOverflow));
+                env.storage().persistent().set(&budget_key, &new_budget);
+                env.storage().persistent().extend_ttl(
+                    &budget_key,
+                    PERSISTENT_LIFETIME_THRESHOLD,
+                    PERSISTENT_BUMP_AMOUNT,
+                );
+            }
+            distributed_total = distributed_total
+                .checked_add(allocation.matching_amount)
+                .unwrap_or_else(|| panic_with_error!(&env, PrinceError::QuadraticOverflow));
+        }
+
+        let current_pool = Self::get_qf_matching_pool(env.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::QfMatchingPool, &(current_pool - distributed_total));
+        env.storage().persistent().extend_ttl(
+            &DataKey::QfMatchingPool,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "VeryPrince"),
+                Symbol::new(&env, "QfDistributed"),
+            ),
+            distributed_total,
+        );
+
+        allocations
+    }
+
     /// Registers a new organization with a unique ID, human-readable name, and initial administrator address.
     ///
     /// # Arguments
