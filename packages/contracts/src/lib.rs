@@ -76,8 +76,6 @@ pub struct LegacyUnlock {
     pub unlock_timestamp: u64,
 }
 
-
-
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProtocolState {
@@ -776,8 +774,7 @@ impl PayoutRegistry {
             let allocation = allocations.get(i).unwrap();
             if allocation.matching_amount > 0 {
                 let budget_key = DataKey::OrgBudget(allocation.project_id.clone());
-                let current_budget: i128 =
-                    env.storage().persistent().get(&budget_key).unwrap_or(0);
+                let current_budget: i128 = env.storage().persistent().get(&budget_key).unwrap_or(0);
                 let new_budget = current_budget
                     .checked_add(allocation.matching_amount)
                     .unwrap_or_else(|| panic_with_error!(&env, PrinceError::BudgetOverflow));
@@ -794,9 +791,10 @@ impl PayoutRegistry {
         }
 
         let current_pool = Self::get_qf_matching_pool(env.clone());
-        env.storage()
-            .persistent()
-            .set(&DataKey::QfMatchingPool, &(current_pool - distributed_total));
+        env.storage().persistent().set(
+            &DataKey::QfMatchingPool,
+            &(current_pool - distributed_total),
+        );
         env.storage().persistent().extend_ttl(
             &DataKey::QfMatchingPool,
             PERSISTENT_LIFETIME_THRESHOLD,
@@ -1277,7 +1275,7 @@ impl PayoutRegistry {
     /// * `MaintainerOrgMismatch` - If the maintainer belongs to a different organization.
     /// * `InsufficientBudget` - If the organization does not have enough remaining budget.
     /// * `PayoutOverflow` - If the payout addition would overflow the maintainer's balance.
-pub fn allocate_payout(
+    pub fn allocate_payout(
         env: Env,
         org_id: Symbol,
         admin: Address,
@@ -1599,11 +1597,15 @@ pub fn allocate_payout(
         maintainer.require_auth_for_args((maintainer.clone(),).into_val(&env));
 
         let balance_key = DataKey::MaintainerBalance(maintainer.clone());
-        let mut payout: MaintainerPayout = env.storage().persistent().get(&balance_key).unwrap_or(MaintainerPayout {
-            amount: 0,
-            claimed_amount: 0,
-            tranches: Vec::new(&env),
-        });
+        let mut payout: MaintainerPayout =
+            env.storage()
+                .persistent()
+                .get(&balance_key)
+                .unwrap_or(MaintainerPayout {
+                    amount: 0,
+                    claimed_amount: 0,
+                    tranches: Vec::new(&env),
+                });
 
         if payout.amount == 0 {
             panic_with_error!(&env, PrinceError::NoClaimableBalance);
@@ -1637,7 +1639,6 @@ pub fn allocate_payout(
             PERSISTENT_LIFETIME_THRESHOLD,
             PERSISTENT_BUMP_AMOUNT,
         );
-
 
         // Interactions: Execute the token transfer as the absolute last step
         // This follows the Check-Effects-Interactions pattern.
@@ -1739,8 +1740,7 @@ pub fn allocate_payout(
     /// * If native protocol admin authorization is missing.
     pub fn propose_admin(env: Env, new_admin: Address) {
         let _guard = ReentrancyGuard::acquire(&env);
-        Self::get_protocol_admin(&env)
-            .require_auth_for_args((new_admin.clone(),).into_val(&env));
+        Self::get_protocol_admin(&env).require_auth_for_args((new_admin.clone(),).into_val(&env));
         env.storage()
             .persistent()
             .set(&DataKey::PendingAdmin, &new_admin);

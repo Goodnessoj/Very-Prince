@@ -3,7 +3,9 @@
 mod tests {
     use crate::{PayoutParams, PayoutRegistry, PayoutRegistryClient};
     use soroban_sdk::testutils::{Address as _, Ledger as _};
-    use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, IntoVal, String, Symbol, Vec};
+    use soroban_sdk::{
+        contract, contractimpl, symbol_short, token, Address, Env, IntoVal, String, Symbol, Vec,
+    };
 
     // ── Test Helpers ─────────────────────────────────────────────────────────
 
@@ -101,7 +103,9 @@ mod tests {
 
     #[test]
     fn test_qf_contribution_requires_humanity_verification() {
-        let Setup { env, client, token, .. } = setup();
+        let Setup {
+            env, client, token, ..
+        } = setup();
         let org_sym = symbol_short!("qfhuman");
         register_test_org(&env, &client, org_sym.clone());
 
@@ -260,7 +264,7 @@ mod tests {
 
         let donor = Address::generate(&env);
         token.mint(&donor, &20_000_000_000_000_000_000);
-        
+
         let result = client.try_fund_org(&org_sym, &donor, &10_000_000_000_000_000_001_i128);
         assert!(result.is_err());
         // also ensure negative amount is rejected
@@ -726,7 +730,7 @@ mod tests {
 
     proptest::proptest! {
         #![proptest_config(proptest::prelude::ProptestConfig::with_cases(50))]
-        
+
         #[test]
         fn test_fuzz_allocate_and_claim(
             org_budget in 1..1_000_000_i128,
